@@ -1,0 +1,24 @@
+{
+  "name": "pi-thinking-steps-extension",
+  "version": "0.9.0",
+  "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
+  "type": "module",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "npm run build && node --import tsx test/thinking-steps.test.ts"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": "latest",
+    "@mariozechner/pi-coding-agent": "latest",
+    "@mariozechner/pi-tui": "latest",
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
