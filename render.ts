@@ -59,20 +59,66 @@ function pickCollapsedStep(steps: DerivedThinkingStep[], activeStepId?: string):
 	}
 	return steps[steps.length - 1];
 }
+function wrapCollapsedSummaryText(text: string, firstWidth: number, continuationWidth: number): string[] {
+	const words = text.split(/\s+/).filter(Boolean);
+	if (words.length === 0) return [];
+
+	const lines: string[] = [];
+	let current = "";
+	let currentWidth = Math.max(8, firstWidth);
+
+	for (const word of words) {
+		const candidate = current ? `${current} ${word}` : word;
+		if (visibleWidth(candidate) <= currentWidth) {
+			current = candidate;
+			continue;
+		}
+
+		if (current) {
+			lines.push(current);
+			currentWidth = Math.max(8, continuationWidth);
+			current = word;
+		} else {
+			lines.push(truncateToWidth(word, currentWidth));
+			currentWidth = Math.max(8, continuationWidth);
+		}
+	}
+
+	if (current) lines.push(current);
+	return lines;
+}
 
 function renderCollapsed(theme: ThinkingThemeLike, width: number, steps: DerivedThinkingStep[], activeStepId?: string, isActive = false, nowMs = Date.now()): string[] {
 	const step = pickCollapsedStep(steps, activeStepId);
 	if (!step) return [];
+
+	const label = "Thinking";
 	const icon = theme.fg(roleColor(step.role), step.icon);
-	const summary = theme.fg("thinkingText", step.summary);
 	const activity = isActive ? pulseGlyph(theme, nowMs) : theme.fg("dim", "·");
-	const line = `${theme.fg("muted", "│")} ${theme.fg("dim", "thinking")} ${icon} ${summary} ${activity}`;
-	return [truncateToWidth(line, width)];
+	const prefix = `${theme.fg("muted", "│")} ${theme.fg("dim", label)} ${icon} `;
+	const continuationPrefix = `${theme.fg("muted", "│")} ${" ".repeat(visibleWidth(`${label} ${step.icon} `))}`;
+	const summaryLines = wrapCollapsedSummaryText(
+		step.summary,
+		width - visibleWidth(prefix),
+		width - visibleWidth(continuationPrefix),
+	);
+
+	if (summaryLines.length <= 1) {
+		const summary = theme.fg("thinkingText", summaryLines[0] ?? step.summary);
+		return [truncateToWidth(`${prefix}${summary} ${activity}`, width)];
+	}
+
+	return summaryLines.map((line, index) => {
+		const styledLine = theme.fg("thinkingText", line);
+		if (index === 0) return truncateToWidth(`${prefix}${styledLine}`, width);
+		if (index === summaryLines.length - 1) return truncateToWidth(`${continuationPrefix}${styledLine} ${activity}`, width);
+		return truncateToWidth(`${continuationPrefix}${styledLine}`, width);
+	});
 }
 
 function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedThinkingStep[], activeStepId?: string): string[] {
 	const lines = [
-		truncateToWidth(`${theme.fg("muted", "┆")} ${theme.fg("dim", "thinking steps · summary")}`, width),
+		truncateToWidth(`${theme.fg("muted", "┆")} ${theme.fg("dim", "Thinking Steps · Summary")}`, width),
 	];
 	for (let index = 0; index < steps.length; index++) {
 		const step = steps[index]!;
@@ -102,7 +148,7 @@ function renderWrappedRawText(theme: ThinkingThemeLike, text: string, width: num
 
 function renderExpanded(theme: ThinkingThemeLike, width: number, steps: DerivedThinkingStep[], activeStepId?: string): string[] {
 	const lines = [
-		truncateToWidth(`${theme.fg("muted", "┆")} ${theme.fg("dim", "thinking steps · expanded")}`, width),
+		truncateToWidth(`${theme.fg("muted", "┆")} ${theme.fg("dim", "Thinking Steps · Expanded")}`, width),
 	];
 
 	for (let index = 0; index < steps.length; index++) {
