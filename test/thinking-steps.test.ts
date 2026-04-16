@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { deriveThinkingSteps, iconForThinkingRole, inferThinkingRole, parseThinkingMode, summarizeThinkingText } from "../parse.js";
-import { retainThinkingStepsPatch } from "../internal-patch.js";
+import { assertPatchableAssistantMessageComponent, assertThinkingStepsTheme, retainThinkingStepsPatch } from "../internal-patch.js";
 import { renderThinkingStepsLines } from "../render.js";
 import { clearActiveThinkingState, setActiveThinkingState, setThinkingStepsMode } from "../state.js";
 import type { ThinkingThemeLike } from "../types.js";
@@ -52,6 +52,22 @@ describe("deriveThinkingSteps", () => {
 		const steps = deriveThinkingSteps([{ contentIndex: 2, text: "", redacted: true }]);
 		assert.equal(steps.length, 1);
 		assert.equal(steps[0]?.summary, "Reasoning is hidden by the provider.");
+	});
+});
+
+describe("patch guards", () => {
+	it("rejects incompatible AssistantMessageComponent exports with a clear error", () => {
+		assert.throws(
+			() => assertPatchableAssistantMessageComponent({ prototype: {} }),
+			/missing updateContent, setHideThinkingBlock, setHiddenThinkingLabel/,
+		);
+	});
+
+	it("rejects incompatible theme exports with a clear error", () => {
+		assert.throws(
+			() => assertThinkingStepsTheme({ fg: () => "ok" }),
+			/interactive theme export is incompatible/,
+		);
 	});
 });
 
@@ -177,6 +193,25 @@ describe("renderThinkingStepsLines", () => {
 		assert.ok(joined.includes("│  Inspect the current renderer implementation."));
 		assert.ok(joined.includes("└─ ✓ Verify the refresh path after mode changes."));
 		assert.ok(joined.includes("│  Verify the refresh path after mode changes."));
+	});
+
+	it("expanded mode strips markdown emphasis markers from visible thinking text", () => {
+		const emphasizedSteps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "**Inspecting event listeners**\n\nVerify that refreshes can be triggered safely.",
+			},
+		]);
+		const lines = renderThinkingStepsLines(theme, 80, {
+			mode: "expanded",
+			steps: emphasizedSteps,
+			activeStepId: undefined,
+			isActive: false,
+		});
+		const joined = stripAnsi(lines.join("\n"));
+		assert.ok(joined.includes("Inspecting event listeners"));
+		assert.ok(!joined.includes("**Inspecting event listeners**"));
+		assert.ok(!joined.includes("**"));
 	});
 
 	it("collapsed active rendering animates without using italics", () => {

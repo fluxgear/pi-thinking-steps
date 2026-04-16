@@ -20,6 +20,65 @@ interface AssistantMessageComponentPrototype {
 	hiddenThinkingLabel: string;
 }
 
+export function assertPatchableAssistantMessageComponent(value: unknown): { prototype: AssistantMessageComponentPrototype } {
+	if (!value || (typeof value !== "function" && typeof value !== "object")) {
+		throw new Error("Thinking Steps patch failed: AssistantMessageComponent export is missing or invalid.");
+	}
+
+	const prototype = (value as { prototype?: unknown }).prototype;
+	if (!prototype || typeof prototype !== "object") {
+		throw new Error("Thinking Steps patch failed: AssistantMessageComponent.prototype is missing.");
+	}
+
+	const candidate = prototype as Record<string, unknown>;
+	const missingMethods = ["updateContent", "setHideThinkingBlock", "setHiddenThinkingLabel"].filter((name) => typeof candidate[name] !== "function");
+	if (missingMethods.length > 0) {
+		throw new Error(`Thinking Steps patch failed: AssistantMessageComponent prototype is incompatible (missing ${missingMethods.join(", ")}).`);
+	}
+
+	return value as { prototype: AssistantMessageComponentPrototype };
+}
+
+export function assertThinkingStepsTheme(value: unknown): ThinkingThemeLike {
+	if (!value || typeof value !== "object") {
+		throw new Error("Thinking Steps patch failed: interactive theme export is missing or invalid.");
+	}
+
+	try {
+		const candidate = value as Record<string, unknown>;
+		if (typeof candidate.fg !== "function" || typeof candidate.bold !== "function") {
+			throw new Error("Thinking Steps patch failed: interactive theme export is incompatible.");
+		}
+	} catch (error) {
+		if (error instanceof Error && /Theme not initialized/.test(error.message)) {
+			return value as ThinkingThemeLike;
+		}
+		throw error;
+	}
+
+	return value as ThinkingThemeLike;
+}
+
+function hasPatchableContentContainer(value: AssistantMessageComponentPrototype): boolean {
+	return Boolean(
+		value.contentContainer
+		&& typeof value.contentContainer.clear === "function"
+		&& typeof value.contentContainer.addChild === "function",
+	);
+}
+
+function fallbackToOriginalUpdateContent(
+	instance: AssistantMessageComponentPrototype,
+	message: AssistantMessage,
+	originalUpdateContent: (message: AssistantMessage) => void,
+): void {
+	try {
+		originalUpdateContent.call(instance, message);
+	} catch (error) {
+		throw new Error("Thinking Steps patch failed: Pi internals are incompatible and fallback rendering also failed.", { cause: error });
+	}
+}
+
 function getPackageRoot(packageName: string): string {
 	const entryUrl = import.meta.resolve(packageName);
 	const entryPath = fileURLToPath(entryUrl);
@@ -59,17 +118,19 @@ function hasVisibleThinkingContent(message: AssistantMessage): boolean {
 }
 
 async function installPatch(): Promise<() => void> {
-	const [{ AssistantMessageComponent }, { theme }] = await Promise.all([
-		importInternalModule<{ AssistantMessageComponent: { prototype: AssistantMessageComponentPrototype } }>(
+	const [{ AssistantMessageComponent: rawAssistantMessageComponent }, { theme: rawTheme }] = await Promise.all([
+		importInternalModule<{ AssistantMessageComponent: unknown }>(
 			"@mariozechner/pi-coding-agent",
 			"dist/modes/interactive/components/assistant-message.js",
 		),
-		importInternalModule<{ theme: ThinkingThemeLike }>(
+		importInternalModule<{ theme: unknown }>(
 			"@mariozechner/pi-coding-agent",
 			"dist/modes/interactive/theme/theme.js",
 		),
 	]);
 
+	const AssistantMessageComponent = assertPatchableAssistantMessageComponent(rawAssistantMessageComponent);
+	const theme = assertThinkingStepsTheme(rawTheme);
 	const prototype = AssistantMessageComponent.prototype;
 	const originalUpdateContent = prototype.updateContent;
 	const originalSetHideThinkingBlock = prototype.setHideThinkingBlock;
@@ -77,57 +138,69 @@ async function installPatch(): Promise<() => void> {
 
 	prototype.updateContent = function patchedUpdateContent(this: AssistantMessageComponentPrototype, message: AssistantMessage): void {
 		this.lastMessage = message;
-		this.contentContainer.clear();
-
-		const thinkingBlocks = collectThinkingBlocks(message);
-		const hasVisibleContent = hasVisibleTextContent(message) || thinkingBlocks.length > 0;
-		if (hasVisibleContent) {
-			this.contentContainer.addChild(new Spacer(1));
+		if (!hasPatchableContentContainer(this)) {
+			fallbackToOriginalUpdateContent(this, message, originalUpdateContent);
+			return;
 		}
 
-		let renderedThinking = false;
-		const hasVisibleTextAfterThinking = (() => {
-			const firstThinkingIndex = thinkingBlocks[0]?.contentIndex;
-			if (firstThinkingIndex === undefined) return false;
-			return message.content.slice(firstThinkingIndex + 1).some((content) => content.type === "text" && content.text.trim().length > 0);
-		})();
+		try {
+			this.contentContainer.clear();
 
-		for (const content of message.content) {
-			if (content.type === "text" && content.text.trim()) {
-				this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme as any));
-				continue;
+			const thinkingBlocks = collectThinkingBlocks(message);
+			const hasVisibleContent = hasVisibleTextContent(message) || thinkingBlocks.length > 0;
+			if (hasVisibleContent) {
+				this.contentContainer.addChild(new Spacer(1));
 			}
 
-			if (content.type === "thinking" && thinkingBlocks.length > 0 && !renderedThinking) {
-				this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks));
-				renderedThinking = true;
-				if (hasVisibleTextAfterThinking) {
-					this.contentContainer.addChild(new Spacer(1));
+			let renderedThinking = false;
+			const hasVisibleTextAfterThinking = (() => {
+				const firstThinkingIndex = thinkingBlocks[0]?.contentIndex;
+				if (firstThinkingIndex === undefined) return false;
+				return message.content.slice(firstThinkingIndex + 1).some((content) => content.type === "text" && content.text.trim().length > 0);
+			})();
+
+			for (const content of message.content) {
+				if (content.type === "text" && content.text.trim()) {
+					this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme as any));
+					continue;
+				}
+
+				if (content.type === "thinking" && thinkingBlocks.length > 0 && !renderedThinking) {
+					this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks));
+					renderedThinking = true;
+					if (hasVisibleTextAfterThinking) {
+						this.contentContainer.addChild(new Spacer(1));
+					}
 				}
 			}
-		}
 
-		const hasToolCalls = message.content.some((content) => content.type === "toolCall");
-		if (!hasToolCalls) {
-			if (message.stopReason === "aborted") {
-				const abortMessage =
-					message.errorMessage && message.errorMessage !== "Request was aborted"
-						? message.errorMessage
-						: "Operation aborted";
-				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
-			} else if (message.stopReason === "error") {
-				const errorMessage = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 1, 0));
+			const hasToolCalls = message.content.some((content) => content.type === "toolCall");
+			if (!hasToolCalls) {
+				if (message.stopReason === "aborted") {
+					const abortMessage =
+						message.errorMessage && message.errorMessage !== "Request was aborted"
+							? message.errorMessage
+							: "Operation aborted";
+					this.contentContainer.addChild(new Spacer(1));
+					this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
+				} else if (message.stopReason === "error") {
+					const errorMessage = message.errorMessage || "Unknown error";
+					this.contentContainer.addChild(new Spacer(1));
+					this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 1, 0));
+				}
 			}
+		} catch {
+			fallbackToOriginalUpdateContent(this, message, originalUpdateContent);
 		}
 	};
 
 	prototype.setHideThinkingBlock = function patchedSetHideThinkingBlock(this: AssistantMessageComponentPrototype, _hide: boolean): void {
 		this.hideThinkingBlock = false;
-		if (this.lastMessage) {
+		if (!this.lastMessage) return;
+		try {
 			this.updateContent(this.lastMessage);
+		} catch {
+			fallbackToOriginalUpdateContent(this, this.lastMessage, originalUpdateContent);
 		}
 	};
 
@@ -136,8 +209,11 @@ async function installPatch(): Promise<() => void> {
 		label: string,
 	): void {
 		this.hiddenThinkingLabel = label;
-		if (this.lastMessage) {
+		if (!this.lastMessage) return;
+		try {
 			this.updateContent(this.lastMessage);
+		} catch {
+			fallbackToOriginalUpdateContent(this, this.lastMessage, originalUpdateContent);
 		}
 	};
 

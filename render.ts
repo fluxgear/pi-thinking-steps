@@ -128,6 +128,30 @@ function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedTh
 	return lines;
 }
 
+function renderThinkingInlineMarkup(theme: ThinkingThemeLike, text: string): string {
+	const segments: Array<{ text: string; bold: boolean }> = [];
+	const markerRe = /(\*\*|__)(.+?)\1/g;
+	let lastIndex = 0;
+	for (const match of text.matchAll(markerRe)) {
+		const markerIndex = match.index ?? 0;
+		if (markerIndex > lastIndex) {
+			segments.push({ text: text.slice(lastIndex, markerIndex), bold: false });
+		}
+		segments.push({ text: match[2] ?? "", bold: true });
+		lastIndex = markerIndex + match[0].length;
+	}
+	if (lastIndex < text.length) {
+		segments.push({ text: text.slice(lastIndex), bold: false });
+	}
+	if (segments.length === 0) return theme.fg("thinkingText", text);
+	return segments
+		.map((segment) => {
+			const colored = theme.fg("thinkingText", segment.text);
+			return segment.bold ? theme.bold(colored) : colored;
+		})
+		.join("");
+}
+
 function renderWrappedRawText(theme: ThinkingThemeLike, text: string, width: number, prefix: string): string[] {
 	const innerWidth = Math.max(8, width - visibleWidth(prefix));
 	const rawLines = text.replace(/\t/g, "    ").split("\n");
@@ -137,7 +161,7 @@ function renderWrappedRawText(theme: ThinkingThemeLike, text: string, width: num
 			rendered.push(truncateToWidth(prefix, width, ""));
 			continue;
 		}
-		const styled = theme.fg("thinkingText", rawLine);
+		const styled = renderThinkingInlineMarkup(theme, rawLine);
 		const wrapped = wrapTextWithAnsi(styled, innerWidth);
 		for (const line of wrapped) {
 			rendered.push(truncateToWidth(`${prefix}${line}`, width, ""));

@@ -110,6 +110,11 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 		[/^(?:mapping out)\s+/i, "map out "],
 	];
 
+	const stripMarkdownEmphasis = (value: string): string =>
+		value
+			.replace(/(\*\*|__)(.+?)\1/g, "$2")
+			.replace(/(\*|_)([^*_]+?)\1/g, "$2");
+
 	const splitIntoCandidates = (value: string): string[] =>
 		value
 			.split(/(?<=[.!?])\s+/)
@@ -118,7 +123,7 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 			.filter(Boolean);
 
 	const normalizeCandidate = (value: string): string => {
-		let candidate = stripLeadingMarker(value).replace(/[.!?]+$/g, "").trim();
+		let candidate = stripMarkdownEmphasis(stripLeadingMarker(value).replace(/[.!?]+$/g, "")).trim();
 		if (!candidate) return "";
 
 		for (const prefix of metaPrefixes) {
