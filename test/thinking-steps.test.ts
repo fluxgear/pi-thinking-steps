@@ -102,6 +102,72 @@ describe("summarizeThinkingText", () => {
 	});
 });
 
+	it("deduplicates redundant candidates", () => {
+		const summary = summarizeThinkingText(
+			"Found TS2322 in render.ts. Found TS2322 in render.ts. Retry npm test after updating the type.",
+		);
+		assert.equal((summary.match(/TS2322/g) ?? []).length, 1);
+	});
+
+	it("preserves failure semantics", () => {
+		const summary = summarizeThinkingText(
+			"Ran npm test and it failed with TS2322 in render.ts. Need to update the type mismatch before retrying.",
+		);
+		assert.ok(summary.toLowerCase().includes("failed"));
+		assert.ok(summary.includes("TS2322"));
+	});
+
+	it("preserves unverified suspicion instead of restating it as fact", () => {
+		const summary = summarizeThinkingText(
+			"This looks like a stale lock, but I haven't verified it yet. I will retry once and check the index state.",
+		);
+		assert.ok(/looks like|haven't verified/i.test(summary));
+		assert.ok(!summary.includes("This is a stale lock."));
+	});
+
+	it("does not imply a commit completed when it did not", () => {
+		const summary = summarizeThinkingText(
+			"Prepared the commit message, but the commit did not complete because .git/index.lock exists.",
+		);
+		assert.ok(summary.toLowerCase().includes("did not complete"));
+		assert.ok(!summary.toLowerCase().includes("commit completed"));
+	});
+
+	it("filters noisy tool-log lines", () => {
+		const summary = summarizeThinkingText(
+			"12:41:22\n-----\nThinking...\n> npm test\nloading...\nFound TS2322 in render.ts and need to retry after patching.",
+		);
+		assert.ok(summary.includes("TS2322"));
+		assert.ok(!/Thinking|loading|12:41:22/.test(summary));
+	});
+
+	it("handles very short deltas cleanly", () => {
+		assert.equal(
+			summarizeThinkingText("Compare the extension API to the TUI internals."),
+			"Compare the extension API to the TUI internals.",
+		);
+	});
+
+	it("enforces the summary budget on long input", () => {
+		const summary = summarizeThinkingText(
+			"Found a lock in .git/index.lock. The commit did not complete. Need to inspect the running git process, verify the lock owner, and retry only after the repository is idle. Also compare whether Larra or git created the lock and preserve the exact failure semantics.",
+		);
+		assert.ok(summary.length <= 84);
+	});
+
+	it("handles mixed bullets and prose", () => {
+		const summary = summarizeThinkingText(
+			"We need to decide the safest next step.\n\n- Found TS2322 in render.ts.\n- Retry npm test after patching the type.\n\nThat should confirm the fix.",
+		);
+		assert.ok(summary.includes("TS2322"));
+		assert.ok(/Retry|retry/.test(summary));
+	});
+
+	it("returns deterministic output for identical input", () => {
+		const input = "Found TS2322 in render.ts. Retry npm test after patching the type mismatch.";
+		assert.equal(summarizeThinkingText(input), summarizeThinkingText(input));
+	});
+
 describe("inferThinkingRole", () => {
 	it("prefers inspect over weak write or verify cues in exploratory reasoning", () => {
 		assert.equal(
