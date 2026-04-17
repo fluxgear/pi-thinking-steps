@@ -2,11 +2,15 @@ import type { ActiveThinkingState, ThinkingStepsMode } from "./types.js";
 
 const STATE_KEY = Symbol.for("pi-extensions.thinking-steps.state");
 
+type PatchCleanup = () => void | Promise<void>;
+type PatchInstallPromise = Promise<PatchCleanup>;
+
 interface ThinkingStepsGlobalState {
 	mode: ThinkingStepsMode;
 	active: ActiveThinkingState;
 	patchRefCount: number;
-	patchCleanup?: (() => void | Promise<void>) | undefined;
+	patchCleanup?: PatchCleanup | undefined;
+	patchInstallPromise?: PatchInstallPromise | undefined;
 }
 
 const globalState = (() => {
@@ -55,10 +59,18 @@ export function decrementPatchRefCount(): number {
 	return globalState.patchRefCount;
 }
 
-export function getPatchCleanup(): (() => void | Promise<void>) | undefined {
+export function getPatchCleanup(): PatchCleanup | undefined {
 	return globalState.patchCleanup;
 }
 
-export function setPatchCleanup(cleanup: (() => void | Promise<void>) | undefined): void {
+export function setPatchCleanup(cleanup: PatchCleanup | undefined): void {
 	globalState.patchCleanup = cleanup;
+}
+
+export function getPatchInstallPromise(): PatchInstallPromise | undefined {
+	return globalState.patchInstallPromise;
+}
+
+export function setPatchInstallPromise(installPromise: PatchInstallPromise | undefined): void {
+	globalState.patchInstallPromise = installPromise;
 }

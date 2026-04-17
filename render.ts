@@ -49,21 +49,32 @@ interface InlineSegment {
 	style: InlineSegmentStyle;
 }
 
+function sanitizeThinkingText(text: string): string {
+	return text
+		.replace(/\r\n?/g, "\n")
+		.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+		.replace(/\u001bP[\s\S]*?\u001b\\/g, "")
+		.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g, "")
+		.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "");
+}
+
 function parseThinkingInlineSegments(text: string): InlineSegment[] {
+	const sanitized = sanitizeThinkingText(text);
 	const segments: InlineSegment[] = [];
-	const markerRe = /(\*\*|__)(.+?)\1|`([^`]+)`/g;
+	const markerRe = /(\*\*|__)(.+?)\1|`([^`]+)`|(\*|_)([^*_]+?)\4/g;
 	let lastIndex = 0;
-	for (const match of text.matchAll(markerRe)) {
+	for (const match of sanitized.matchAll(markerRe)) {
 		const markerIndex = match.index ?? 0;
 		if (markerIndex > lastIndex) {
-			segments.push({ text: text.slice(lastIndex, markerIndex), style: "plain" });
+			segments.push({ text: sanitized.slice(lastIndex, markerIndex), style: "plain" });
 		}
 		if (match[2]) segments.push({ text: match[2], style: "bold" });
 		if (match[3]) segments.push({ text: match[3], style: "code" });
+		if (match[5]) segments.push({ text: match[5], style: "plain" });
 		lastIndex = markerIndex + match[0].length;
 	}
-	if (lastIndex < text.length) {
-		segments.push({ text: text.slice(lastIndex), style: "plain" });
+	if (lastIndex < sanitized.length) {
+		segments.push({ text: sanitized.slice(lastIndex), style: "plain" });
 	}
 	return segments;
 }
@@ -171,8 +182,9 @@ function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedTh
 }
 
 function renderThinkingInlineMarkup(theme: ThinkingThemeLike, text: string): string {
-	const segments = parseThinkingInlineSegments(text);
-	if (segments.length === 0) return theme.fg("thinkingText", text);
+	const sanitized = sanitizeThinkingText(text);
+	const segments = parseThinkingInlineSegments(sanitized);
+	if (segments.length === 0) return theme.fg("thinkingText", sanitized);
 	return segments.map((segment) => renderThinkingInlineSegment(theme, segment)).join("");
 }
 
@@ -196,7 +208,8 @@ function renderThinkingDisplayLine(theme: ThinkingThemeLike, text: string): stri
 
 function renderWrappedRawText(theme: ThinkingThemeLike, text: string, width: number, prefix: string): string[] {
 	const innerWidth = Math.max(8, width - visibleWidth(prefix));
-	const rawLines = text.replace(/\t/g, "    ").split("\n");
+	const sanitizedText = sanitizeThinkingText(text);
+	const rawLines = sanitizedText.replace(/\t/g, "    " ).split("\n");
 	const rendered: string[] = [];
 	for (const rawLine of rawLines) {
 		if (rawLine.trim().length === 0) {

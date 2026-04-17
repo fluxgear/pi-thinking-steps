@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AssistantMessage, ThinkingContent } from "@mariozechner/pi-ai";
 import { Markdown, Spacer, Text } from "@mariozechner/pi-tui";
-import { getPatchCleanup, setPatchCleanup, incrementPatchRefCount, decrementPatchRefCount } from "./state.js";
+import { decrementPatchRefCount, getPatchCleanup, getPatchInstallPromise, incrementPatchRefCount, setPatchCleanup, setPatchInstallPromise } from "./state.js";
 import { ThinkingStepsComponent } from "./render.js";
 import type { ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
 
@@ -228,12 +228,24 @@ export async function retainThinkingStepsPatch(): Promise<() => Promise<void>> {
 	incrementPatchRefCount();
 	let cleanup = getPatchCleanup();
 	if (!cleanup) {
+		const existingInstallPromise = getPatchInstallPromise();
+		const installPromise = existingInstallPromise ?? installPatch();
+		if (!existingInstallPromise) {
+			setPatchInstallPromise(installPromise);
+		}
+
 		try {
-			cleanup = await installPatch();
-			setPatchCleanup(cleanup);
+			cleanup = await installPromise;
+			if (!getPatchCleanup()) {
+				setPatchCleanup(cleanup);
+			}
 		} catch (error) {
 			decrementPatchRefCount();
 			throw error;
+		} finally {
+			if (getPatchInstallPromise() === installPromise) {
+				setPatchInstallPromise(undefined);
+			}
 		}
 	}
 

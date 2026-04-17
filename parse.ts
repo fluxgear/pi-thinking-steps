@@ -95,7 +95,7 @@ function isStandaloneHeadingChunk(chunk: string): boolean {
 
 function mergeHeadingParagraphChunks(chunks: string[]): string[] {
 	const merged: string[] = [];
-	for (let index = 0; index < chunks.length; index++) {
+	for (let index = 0; index < chunks.length; index += 1) {
 		const chunk = chunks[index]!;
 		const nextChunk = chunks[index + 1];
 		if (nextChunk && isStandaloneHeadingChunk(chunk)) {
@@ -106,6 +106,14 @@ function mergeHeadingParagraphChunks(chunks: string[]): string[] {
 		merged.push(chunk);
 	}
 	return merged;
+}
+
+function isListParagraphChunk(chunk: string): boolean {
+	const firstLine = normalizeNewlines(chunk)
+		.split("\n")
+		.map((line) => line.trim())
+		.find(Boolean);
+	return firstLine ? LIST_ITEM_RE.test(firstLine) : false;
 }
 
 export function splitThinkingIntoStepTexts(text: string): string[] {
@@ -120,7 +128,18 @@ export function splitThinkingIntoStepTexts(text: string): string[] {
 	if (paragraphChunks.length === 0) return [];
 
 	const mergedChunks = mergeHeadingParagraphChunks(paragraphChunks);
-	const steps = mergedChunks.flatMap((chunk) => splitListChunk(chunk));
+	const steps: string[] = [];
+	for (let index = 0; index < mergedChunks.length; index += 1) {
+		const chunk = mergedChunks[index]!;
+		const previousStep = steps[steps.length - 1];
+		const nextChunk = mergedChunks[index + 1];
+		if (previousStep && isListParagraphChunk(previousStep) && !isListParagraphChunk(chunk) && nextChunk && isListParagraphChunk(nextChunk)) {
+			steps[steps.length - 1] = `${previousStep}\n\n${chunk}`;
+			continue;
+		}
+
+		steps.push(...splitListChunk(chunk));
+	}
 	return steps.length > 0 ? steps : [normalized];
 }
 
