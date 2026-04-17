@@ -71,6 +71,43 @@ function splitListChunk(chunk: string): string[] {
 	return items.filter(Boolean);
 }
 
+function stripMarkdownEmphasis(text: string): string {
+	return text
+		.replace(/(\*\*|__)(.+?)\1/g, "$2")
+		.replace(/(\*|_)([^*_]+?)\1/g, "$2");
+}
+
+function isStandaloneHeadingChunk(chunk: string): boolean {
+	const lines = normalizeNewlines(chunk)
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	if (lines.length !== 1) return false;
+
+	const line = lines[0]!;
+	if (LIST_ITEM_RE.test(line)) return false;
+	if (HEADING_RE.test(line)) return true;
+	if (!/^(\*\*|__)(.+?)\1$/.test(line)) return false;
+
+	const stripped = stripMarkdownEmphasis(stripLeadingMarker(line));
+	return stripped.length > 0 && stripped.length <= 80 && !/[.!?]/.test(stripped);
+}
+
+function mergeHeadingParagraphChunks(chunks: string[]): string[] {
+	const merged: string[] = [];
+	for (let index = 0; index < chunks.length; index++) {
+		const chunk = chunks[index]!;
+		const nextChunk = chunks[index + 1];
+		if (nextChunk && isStandaloneHeadingChunk(chunk)) {
+			merged.push(`${chunk}\n\n${nextChunk}`);
+			index += 1;
+			continue;
+		}
+		merged.push(chunk);
+	}
+	return merged;
+}
+
 export function splitThinkingIntoStepTexts(text: string): string[] {
 	const normalized = normalizeNewlines(text).trim();
 	if (!normalized) return [];
@@ -82,7 +119,8 @@ export function splitThinkingIntoStepTexts(text: string): string[] {
 
 	if (paragraphChunks.length === 0) return [];
 
-	const steps = paragraphChunks.flatMap((chunk) => splitListChunk(chunk));
+	const mergedChunks = mergeHeadingParagraphChunks(paragraphChunks);
+	const steps = mergedChunks.flatMap((chunk) => splitListChunk(chunk));
 	return steps.length > 0 ? steps : [normalized];
 }
 
@@ -120,11 +158,14 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 	const artifactRe = /(?:\b[a-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|txt|yml|yaml|lock)\b|\b[a-z_][a-z0-9_]*\([^)]*\)|`[^`]+`|\b(?:npm|node|git|pi|larra|mcp|tsx|tsc)\b|\b(?:ts\d{3,5}|err_[a-z0-9_]+)\b)/i;
 	const failureCueRe = /\b(failed|failure|error|errors|blocked|abort(?:ed)?|cannot|unable|did not complete|not completed|reverted|rollback|locked)\b/i;
 	const decisionCueRe = /\b(decided|decision|chose|switched|replaced|confirmed|fixed|resolved|discovered|found)\b/i;
-	const actionCueRe = /\b(retry|rerun|inspect|check|verify|compare|search|read|patch|update|implement|remove|rename|write|run|fix|switch|revert)\b/i;
+	const actionCueRe = /\b(retry|rerun|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
 	const nextActionCueRe = /\b(first|next|retry|rerun|before|after)\b/i;
 	const uncertaintyCueRe = /\b(maybe|might|possibly|probably|seems|looks like|suspect|likely|unverified|haven'?t verified|not verified)\b/i;
 	const speculativeCueRe = /\b(seems like|could be useful|might be useful|would be useful|considering)\b/i;
-	const directActionStartRe = /^(?:use|inspect|check|verify|compare|search|read|patch|update|implement|remove|rename|write|run|fix|switch|revert)\b/i;
+	const metaChatterRe = /\b(?:i(?:'m| am)?\s+(?:thinking|contemplating|curious|hoping|wondering)|take a closer look|what makes the most sense|could really help|idealized scenarios|real interactions|worth checking)\b/i;
+	const weakFragmentStartRe = /^(?:and|but|or|so|then|though|while|which|because|however|therefore|perhaps|maybe|possibly|also|still|just|since)\b/i;
+	const genericObjectActionRe = /^(?:flag|review|check|inspect|look\s+into)\s+(?:that|this|it)\b/i;
+	const directActionStartRe = /^(?:use|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
 	const weakOrientationRe = /\bconnect and orient ourselves\b/i;
 
 	const stripMarkdownEmphasis = (value: string): string =>
@@ -145,10 +186,13 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 		return !normalizedLine || pureTimestampRe.test(normalizedLine) || separatorRe.test(normalizedLine) || spinnerStatusRe.test(normalizedLine);
 	};
 
-	const splitSentences = (value: string): string[] =>
-		(value.match(/[^.!?\n]+(?:[.!?]+|$)/g) ?? [value])
-			.map((sentence) => sentence.trim())
+	const splitSentences = (value: string): string[] => {
+		const dotPlaceholder = "__PI_THINKING_DOT__";
+		const protectedValue = value.replace(/(\b[a-z0-9_-]+)\.(ts|tsx|js|jsx|json|md|txt|yml|yaml|lock)\b/gi, `$1${dotPlaceholder}$2`);
+		return (protectedValue.match(/[^.!?\n]+(?:[.!?]+|$)/g) ?? [protectedValue])
+			.map((sentence) => sentence.replaceAll(dotPlaceholder, ".").trim())
 			.filter(Boolean);
+	};
 
 	const splitClauses = (value: string): string[] =>
 		value
@@ -162,8 +206,16 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 	const compressCandidate = (value: string): string => {
 		let candidate = normalizeCandidateText(value)
 			.replace(/^(?:it seems like|it looks like|it could be useful to|it might be useful to|it would be useful to|i['’]?m considering|i am considering|how we can|we can)\s*/i, "")
-			.replace(/^\b(?:well|okay|now|actually|basically|simply)\b[,:]?\s+/i, "")
-			.replace(/^\b(?:let me|i need to|i want to|i am going to|i'm going to)\b\s+/i, "")
+			.replace(/^\b(?:well|okay|now|actually|basically|simply|really)\b[,:]?\s+/i, "")
+			.replace(/^(?:i\s+think\s+)?i\s+need\s+to\s+/i, "")
+			.replace(/^(?:i\s+think\s+)?i\s+should\s+/i, "")
+			.replace(/^i\s+plan\s+to\s+/i, "")
+			.replace(/^i\s+(?:will|can)\s+/i, "")
+			.replace(/^i\s+(?:want\s+to|am\s+going\s+to|['’]?m\s+going\s+to)\s+/i, "")
+			.replace(/^i\s+think\s+the\s+next\s+step\s+(?:might\s+be|is)\s+to\s+/i, "")
+			.replace(/^the\s+next\s+step\s+(?:might\s+be|is)\s+to\s+/i, "")
+			.replace(/^(?:it(?:'s| is)\s+(?:a\s+good\s+idea|helpful|useful|worthwhile)\s+to)\s+/i, "")
+			.replace(/^\b(?:let me|let'?s)\b\s+/i, "")
 			.replace(/\s*\(([^()]*)\)\s*/g, " ")
 			.replace(/\b(?:for now|at this point)\b/gi, "")
 			.replace(/\b(?:could|might|would)\s+be\s+(?:helpful|useful)(?:\s+(?:here|first))?/gi, "")
@@ -178,11 +230,18 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 			.replace(/^comparing\b/i, "Compare")
 			.replace(/^verifying\b/i, "Verify")
 			.replace(/^searching\b/i, "Search")
+			.replace(/^finding\b/i, "Find")
 			.replace(/^reviewing\b/i, "Review")
 			.replace(/^reading\b/i, "Read")
 			.replace(/^writing\b/i, "Write")
 			.replace(/^planning\b/i, "Plan")
 			.replace(/^mapping out\b/i, "Map out")
+			.replace(/^gathering\b/i, "Gather")
+			.replace(/^retrieving\b/i, "Retrieve")
+			.replace(/^listing\b/i, "List")
+			.replace(/^archiving\b/i, "Archive")
+			.replace(/^exploring\b/i, "Explore")
+			.replace(/^look\s+into\b/i, "Look into")
 			.replace(/^connect and orient ourselves\b/i, "Orient to the current state");
 
 		return collapseWhitespace(candidate).replace(/^[,;:.-]+|[,;:.-]+$/g, "").trim();
@@ -236,7 +295,7 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 			const structuredLines = cleanLines.filter((line) => LIST_ITEM_RE.test(line) || HEADING_RE.test(line));
 			structuredLines.forEach((line) => pushCandidate(line, HEADING_RE.test(line) ? "heading" : "bullet"));
 
-			const prose = cleanLines.filter((line) => !LIST_ITEM_RE.test(line) && !HEADING_RE.test(line)).join(" ");
+			const prose = cleanLines.filter((line) => !LIST_ITEM_RE.test(line) && !HEADING_RE.test(line)).join(" " );
 			if (!prose) return;
 			for (const sentence of splitSentences(prose)) {
 				const clauseCandidates = sentence.length > 100 || /[,;:]|\b(?:but|so|and then)\b/i.test(sentence)
@@ -309,15 +368,31 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 			+ (actionCueRe.test(candidate.compressed) ? 0.6 : 0)
 			+ (nextActionCueRe.test(candidate.compressed) ? 0.3 : 0)
 			+ (artifactRe.test(candidate.text) ? 0.2 : 0)
-			- ((uncertaintyCueRe.test(candidate.text) || speculativeCueRe.test(candidate.text)) && !failureCueRe.test(candidate.text) && !directActionStartRe.test(candidate.compressed) ? 0.75 : 0),
+			- (metaChatterRe.test(candidate.text) ? 0.45 : 0)
+			- (((uncertaintyCueRe.test(candidate.text) || speculativeCueRe.test(candidate.text)) && !failureCueRe.test(candidate.text) && !directActionStartRe.test(candidate.compressed)) ? 0.75 : 0),
 		);
 		candidate.score = (0.55 * candidate.centrality) + (0.2 * candidate.positionPrior) + (0.15 * candidate.structurePrior) + (0.1 * candidate.cuePrior);
+
+		const hasConcreteCue =
+			directActionStartRe.test(candidate.compressed)
+			|| failureCueRe.test(candidate.text)
+			|| decisionCueRe.test(candidate.text)
+			|| artifactRe.test(candidate.text);
+
 		if (directActionStartRe.test(candidate.compressed)) candidate.score += 0.35;
+		if (candidate.kind === "heading" && !hasConcreteCue) candidate.score -= 0.45;
+		if (metaChatterRe.test(candidate.text) && !hasConcreteCue) candidate.score -= 0.4;
+		if (weakFragmentStartRe.test(candidate.compressed) && !hasConcreteCue) candidate.score -= 0.9;
+		if ((/^not\b/i.test(candidate.compressed) || candidate.tokens.length < 4) && candidate.kind === "clause" && !hasConcreteCue) candidate.score -= 0.75;
+		if (genericObjectActionRe.test(candidate.compressed) && !artifactRe.test(candidate.text)) candidate.score -= 0.8;
 		if (weakOrientationRe.test(candidate.compressed) && !artifactRe.test(candidate.compressed)) candidate.score -= 0.6;
 	}
 
 	const formatSummarySentence = (clauses: string[]): string => {
-		const normalizedClauses = clauses.map((candidate) => candidate.replace(/[.!?;:,]+$/g, "").trim()).filter(Boolean);
+		const normalizedClauses = clauses
+			.map((candidate) => candidate.replace(/[.!?;:,]+$/g, "").trim())
+			.filter(Boolean)
+			.filter((clause, index) => index === 0 || !weakFragmentStartRe.test(clause));
 		if (normalizedClauses.length === 0) return fallback;
 		const [firstClause, ...restClauses] = normalizedClauses;
 		let sentence = capitalize(firstClause);
@@ -334,7 +409,7 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 	const selected: Candidate[] = [];
 	const directActionCandidates = candidates.filter((candidate) => directActionStartRe.test(candidate.compressed));
 	const prioritizedPool = directActionCandidates.length > 0
-		? candidates.filter((candidate) => directActionStartRe.test(candidate.compressed) || failureCueRe.test(candidate.text) || decisionCueRe.test(candidate.text) || uncertaintyCueRe.test(candidate.text))
+		? candidates.filter((candidate) => !genericObjectActionRe.test(candidate.compressed) && (directActionStartRe.test(candidate.compressed) || failureCueRe.test(candidate.text) || decisionCueRe.test(candidate.text) || (uncertaintyCueRe.test(candidate.text) && !weakFragmentStartRe.test(candidate.compressed) && !(candidate.kind === "clause" && candidate.tokens.length < 4))))
 		: candidates;
 	const remaining = [...prioritizedPool];
 

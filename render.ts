@@ -42,12 +42,43 @@ function pulseGlyph(theme: ThinkingThemeLike, nowMs: number): string {
 	return frames[frame] ?? frames[0]!;
 }
 
+type InlineSegmentStyle = "plain" | "bold" | "code";
+
+interface InlineSegment {
+	text: string;
+	style: InlineSegmentStyle;
+}
+
+function parseThinkingInlineSegments(text: string): InlineSegment[] {
+	const segments: InlineSegment[] = [];
+	const markerRe = /(\*\*|__)(.+?)\1|`([^`]+)`/g;
+	let lastIndex = 0;
+	for (const match of text.matchAll(markerRe)) {
+		const markerIndex = match.index ?? 0;
+		if (markerIndex > lastIndex) {
+			segments.push({ text: text.slice(lastIndex, markerIndex), style: "plain" });
+		}
+		if (match[2]) segments.push({ text: match[2], style: "bold" });
+		if (match[3]) segments.push({ text: match[3], style: "code" });
+		lastIndex = markerIndex + match[0].length;
+	}
+	if (lastIndex < text.length) {
+		segments.push({ text: text.slice(lastIndex), style: "plain" });
+	}
+	return segments;
+}
+
+function renderThinkingInlineSegment(theme: ThinkingThemeLike, segment: InlineSegment): string {
+	if (segment.style === "bold") return theme.bold(theme.fg("thinkingText", segment.text));
+	if (segment.style === "code") return theme.bold(theme.fg("accent", segment.text));
+	return theme.fg("thinkingText", segment.text);
+}
+
 function stepHeader(theme: ThinkingThemeLike, step: DerivedThinkingStep, active: boolean, connector: string): string {
 	const connectorColor = active ? "accent" : "muted";
 	const icon = theme.fg(roleColor(step.role), step.icon);
-	const summaryText = active
-		? theme.bold(theme.fg("thinkingText", step.summary))
-		: theme.fg("thinkingText", step.summary);
+	const renderedSummary = renderThinkingInlineMarkup(theme, step.summary);
+	const summaryText = active ? theme.bold(renderedSummary) : renderedSummary;
 	return `${theme.fg(connectorColor, connector)} ${icon} ${summaryText}`;
 }
 
@@ -59,8 +90,13 @@ function pickCollapsedStep(steps: DerivedThinkingStep[], activeStepId?: string):
 	}
 	return steps[steps.length - 1];
 }
-function wrapCollapsedSummaryText(text: string, firstWidth: number, continuationWidth: number): string[] {
-	const words = text.split(/\s+/).filter(Boolean);
+function wrapCollapsedSummaryText(theme: ThinkingThemeLike, text: string, firstWidth: number, continuationWidth: number): string[] {
+	const words = parseThinkingInlineSegments(text).flatMap((segment) =>
+		segment.text
+			.split(/\s+/)
+			.filter(Boolean)
+			.map((word) => renderThinkingInlineSegment(theme, { ...segment, text: word })),
+	);
 	if (words.length === 0) return [];
 
 	const lines: string[] = [];
@@ -88,6 +124,13 @@ function wrapCollapsedSummaryText(text: string, firstWidth: number, continuation
 	return lines;
 }
 
+function stripInlineFormattingMarkers(text: string): string {
+	return text
+		.replace(/(\*\*|__)(.+?)\1/g, "$2")
+		.replace(/`([^`]+)`/g, "$1")
+		.replace(/(\*|_)([^*_]+?)\1/g, "$2");
+}
+
 function renderCollapsed(theme: ThinkingThemeLike, width: number, steps: DerivedThinkingStep[], activeStepId?: string, isActive = false, nowMs = Date.now()): string[] {
 	const step = pickCollapsedStep(steps, activeStepId);
 	if (!step) return [];
@@ -98,21 +141,20 @@ function renderCollapsed(theme: ThinkingThemeLike, width: number, steps: Derived
 	const prefix = `${theme.fg("muted", "│")} ${theme.fg("dim", label)} ${icon} `;
 	const continuationPrefix = `${theme.fg("muted", "│")} ${" ".repeat(visibleWidth(`${label} ${step.icon} `))}`;
 	const summaryLines = wrapCollapsedSummaryText(
+		theme,
 		step.summary,
 		width - visibleWidth(prefix),
 		width - visibleWidth(continuationPrefix),
 	);
 
 	if (summaryLines.length <= 1) {
-		const summary = theme.fg("thinkingText", summaryLines[0] ?? step.summary);
-		return [truncateToWidth(`${prefix}${summary} ${activity}`, width)];
+		return [truncateToWidth(`${prefix}${summaryLines[0] ?? renderThinkingInlineMarkup(theme, step.summary)} ${activity}`, width)];
 	}
 
 	return summaryLines.map((line, index) => {
-		const styledLine = theme.fg("thinkingText", line);
-		if (index === 0) return truncateToWidth(`${prefix}${styledLine}`, width);
-		if (index === summaryLines.length - 1) return truncateToWidth(`${continuationPrefix}${styledLine} ${activity}`, width);
-		return truncateToWidth(`${continuationPrefix}${styledLine}`, width);
+		if (index === 0) return truncateToWidth(`${prefix}${line}`, width);
+		if (index === summaryLines.length - 1) return truncateToWidth(`${continuationPrefix}${line} ${activity}`, width);
+		return truncateToWidth(`${continuationPrefix}${line}`, width);
 	});
 }
 
@@ -129,27 +171,27 @@ function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedTh
 }
 
 function renderThinkingInlineMarkup(theme: ThinkingThemeLike, text: string): string {
-	const segments: Array<{ text: string; bold: boolean }> = [];
-	const markerRe = /(\*\*|__)(.+?)\1/g;
-	let lastIndex = 0;
-	for (const match of text.matchAll(markerRe)) {
-		const markerIndex = match.index ?? 0;
-		if (markerIndex > lastIndex) {
-			segments.push({ text: text.slice(lastIndex, markerIndex), bold: false });
-		}
-		segments.push({ text: match[2] ?? "", bold: true });
-		lastIndex = markerIndex + match[0].length;
-	}
-	if (lastIndex < text.length) {
-		segments.push({ text: text.slice(lastIndex), bold: false });
-	}
+	const segments = parseThinkingInlineSegments(text);
 	if (segments.length === 0) return theme.fg("thinkingText", text);
-	return segments
-		.map((segment) => {
-			const colored = theme.fg("thinkingText", segment.text);
-			return segment.bold ? theme.bold(colored) : colored;
-		})
-		.join("");
+	return segments.map((segment) => renderThinkingInlineSegment(theme, segment)).join("");
+}
+
+function renderThinkingDisplayLine(theme: ThinkingThemeLike, text: string): string {
+	const headingMatch = text.match(/^(\s{0,3})#{1,6}\s+(.+)$/);
+	if (headingMatch) {
+		const indent = headingMatch[1] ?? "";
+		const content = headingMatch[2] ?? "";
+		return `${indent}${theme.bold(renderThinkingInlineMarkup(theme, content))}`;
+	}
+
+	const listMatch = text.match(/^(\s*)(?:[-*+]\s+|\d+[.)]\s+|[a-z][.)]\s+)(.+)$/i);
+	if (listMatch) {
+		const indent = listMatch[1] ?? "";
+		const content = listMatch[2] ?? "";
+		return `${indent}${theme.fg("muted", "•")} ${renderThinkingInlineMarkup(theme, content)}`;
+	}
+
+	return renderThinkingInlineMarkup(theme, text);
 }
 
 function renderWrappedRawText(theme: ThinkingThemeLike, text: string, width: number, prefix: string): string[] {
@@ -161,7 +203,7 @@ function renderWrappedRawText(theme: ThinkingThemeLike, text: string, width: num
 			rendered.push(truncateToWidth(prefix, width, ""));
 			continue;
 		}
-		const styled = renderThinkingInlineMarkup(theme, rawLine);
+		const styled = renderThinkingDisplayLine(theme, rawLine);
 		const wrapped = wrapTextWithAnsi(styled, innerWidth);
 		for (const line of wrapped) {
 			rendered.push(truncateToWidth(`${prefix}${line}`, width, ""));
@@ -184,7 +226,8 @@ function renderExpanded(theme: ThinkingThemeLike, width: number, steps: DerivedT
 		const normalizedBody = step.body.trim();
 		if (!normalizedBody) continue;
 
-		lines.push(...renderWrappedRawText(theme, normalizedBody, width, `${theme.fg("muted", "│")}  `));
+		const bodyPrefix = index === steps.length - 1 ? "   " : `${theme.fg("muted", "│")}  `;
+		lines.push(...renderWrappedRawText(theme, normalizedBody, width, bodyPrefix));
 	}
 
 	return lines;

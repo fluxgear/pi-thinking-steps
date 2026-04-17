@@ -19,6 +19,13 @@ function createPlainTheme(): ThinkingThemeLike {
 	};
 }
 
+function createAnsiTheme(): ThinkingThemeLike {
+	return {
+		fg: (color, text) => `[${color === "accent" ? "36" : "37"}m${text}[39m`,
+		bold: (text) => `[1m${text}[22m`,
+	};
+}
+
 function getPackageRoot(packageName: string): string {
 	const entryUrl = import.meta.resolve(packageName);
 	const entryPath = fileURLToPath(entryUrl);
@@ -46,6 +53,32 @@ describe("deriveThinkingSteps", () => {
 		assert.equal(steps[2]?.summary, "Verify how thinking visibility is toggled.");
 		assert.equal(steps[0]?.icon, "◫");
 		assert.equal(steps[2]?.icon, "✓");
+	});
+
+	it("keeps markdown heading paragraphs attached to their following body", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "## Inspecting render pipeline\n\nVerify that refreshes can be triggered safely.",
+			},
+		]);
+
+		assert.equal(steps.length, 1);
+		assert.equal(steps[0]?.body, "## Inspecting render pipeline\n\nVerify that refreshes can be triggered safely.");
+		assert.match(steps[0]?.summary ?? "", /Inspect render pipeline|Verify that refreshes can be triggered safely/);
+	});
+
+	it("keeps emphasized heading paragraphs attached to their following body", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "**Inspecting event listeners**\n\nVerify that refreshes can be triggered safely.",
+			},
+		]);
+
+		assert.equal(steps.length, 1);
+		assert.equal(steps[0]?.body, "**Inspecting event listeners**\n\nVerify that refreshes can be triggered safely.");
+		assert.match(steps[0]?.summary ?? "", /Inspect event listeners|Verify that refreshes can be triggered safely/);
 	});
 
 	it("creates a faithful fallback summary for redacted reasoning", () => {
@@ -100,7 +133,38 @@ describe("summarizeThinkingText", () => {
 			"Use Larra edit workflows, then inspect the connection first.",
 		);
 	});
-});
+
+	it("prefers concrete actions over meta setup in a real transcript delta", () => {
+		const summary = summarizeThinkingText(
+			"I think I need to gather project instructions and workspace details, possibly through Larra. I should really look into using the get_project_instructions function, but my project memory might have a conflicting inference about being \"Likely Python-based\" when it's actually TypeScript. I need to flag that! This could mean there's stale or inaccurate memory that needs updating later. Before moving forward, I should have a mandatory 5-line checkpoint for the developer after loading the current context. Let me retrieve the relevant instructions as well.",
+		);
+		assert.match(summary, /gather project instructions and workspace details|look into using the get_project_instructions function/i);
+		assert.doesNotMatch(summary, /possibly through Larra|flag that|Clarifying project details/i);
+	});
+
+	it("prefers the concrete next step over contemplative framing in a real transcript delta", () => {
+		const summary = summarizeThinkingText(
+			"I’m contemplating whether I need to get workspaces or if that's necessary. Maybe I should look into using linked workspaces instead? I think the next step might be to inspect the list of workspaces I currently have available. I’m curious about what options I have and which would be the most efficient for my needs. Let's take a closer look and see what makes the most sense!",
+		);
+		assert.match(summary, /inspect the list of workspaces/i);
+		assert.doesNotMatch(summary, /contemplating whether I need to get workspaces/i);
+	});
+
+	it("avoids negative tool-availability chatter in a real transcript delta", () => {
+		const summary = summarizeThinkingText(
+			"I need to find actual examples of transcripts, perhaps starting with the Larra transcript. While there's a tool for it, I might not retrieve the transcripts directly. I could search for session history or even look for previous sessions with relevant prompt files. Real examples would be better than synthetic ones. Gathering some actual thinking deltas from conversations or prompts would provide insights, so I should explore logs for phrases that show reasoning styles.",
+		);
+		assert.match(summary, /find actual examples of transcripts|search for session history|explore logs/i);
+		assert.doesNotMatch(summary, /might not retrieve the transcripts directly|while there's a tool for it|worth checking out/i);
+	});
+
+	it("keeps the concrete retry step instead of the heading label or repair aside in a real transcript delta", () => {
+		const summary = summarizeThinkingText(
+			"I plan to retry once and check the index state. This involves direct actions like \"retry once\" and \"check,\" indicating some uncertainty that I should include. I don't necessarily need to stick to a classical formula since the user is asking for a deterministic classical pipeline. I'll keep some centrality based on tf-like methods. Since the file is currently broken, I’ll write the entire parse.ts with all contents while being careful and replacing only the summarize function. It should be manageable at about 400 lines.",
+		);
+		assert.match(summary, /retry once and check the index state/i);
+		assert.doesNotMatch(summary, /Retrying and checking state|write the entire parse|since the file is currently broken/i);
+	});
 
 	it("deduplicates redundant candidates", () => {
 		const summary = summarizeThinkingText(
@@ -167,7 +231,7 @@ describe("summarizeThinkingText", () => {
 		const input = "Found TS2322 in render.ts. Retry npm test after patching the type mismatch.";
 		assert.equal(summarizeThinkingText(input), summarizeThinkingText(input));
 	});
-
+});
 describe("inferThinkingRole", () => {
 	it("prefers inspect over weak write or verify cues in exploratory reasoning", () => {
 		assert.equal(
@@ -231,6 +295,28 @@ describe("renderThinkingStepsLines", () => {
 		assert.ok(!normalized.includes("…"));
 	});
 
+	it("collapsed mode renders inline formatting instead of raw markdown markers", () => {
+		const ansiTheme = createAnsiTheme();
+		const markdownSummarySteps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "Inspect `render.ts` carefully.",
+			},
+		]);
+		const lines = renderThinkingStepsLines(ansiTheme, 120, {
+			mode: "collapsed",
+			steps: markdownSummarySteps,
+			activeStepId: markdownSummarySteps[0]?.id,
+			isActive: false,
+			nowMs: 0,
+		});
+		assert.equal(lines.length, 1);
+		assert.ok((lines[0] ?? "").includes("[1m"));
+		const joined = stripAnsi(lines.join("\n"));
+		assert.ok(joined.includes("Inspect render.ts carefully."));
+		assert.ok(!joined.includes("`render.ts`"));
+	});
+
 	it("summary mode renders one summarized line per step with pipe connectors", () => {
 		const lines = renderThinkingStepsLines(theme, 120, {
 			mode: "summary",
@@ -246,7 +332,27 @@ describe("renderThinkingStepsLines", () => {
 		assert.ok(stepLines.some((line) => stripAnsi(line).includes("✓ Verify the refresh path after mode changes.")));
 	});
 
-	it("expanded mode renders full step details with connected pipes", () => {
+	it("summary mode strips raw markdown markers from visible summaries", () => {
+		const markdownSummarySteps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "Inspect `render.ts` carefully.\n\nVerify that **refreshes** can be triggered safely.",
+			},
+		]);
+		const lines = renderThinkingStepsLines(theme, 120, {
+			mode: "summary",
+			steps: markdownSummarySteps,
+			activeStepId: undefined,
+			isActive: false,
+		});
+		const joined = stripAnsi(lines.join("\n"));
+		assert.ok(joined.includes("Inspect render.ts carefully."));
+		assert.ok(joined.includes("Verify that refreshes can be triggered safely."));
+		assert.ok(!joined.includes("`render.ts`"));
+		assert.ok(!joined.includes("**refreshes**"));
+	});
+
+	it("expanded mode renders full step details with cleaner continuation pipes", () => {
 		const lines = renderThinkingStepsLines(theme, 64, {
 			mode: "expanded",
 			steps,
@@ -258,26 +364,30 @@ describe("renderThinkingStepsLines", () => {
 		assert.ok(joined.includes("├─ ◫ Inspect the current renderer implementation."));
 		assert.ok(joined.includes("│  Inspect the current renderer implementation."));
 		assert.ok(joined.includes("└─ ✓ Verify the refresh path after mode changes."));
-		assert.ok(joined.includes("│  Verify the refresh path after mode changes."));
+		assert.ok(joined.includes("   Verify the refresh path after mode changes."));
+		assert.ok(!joined.includes("│  Verify the refresh path after mode changes."));
 	});
 
-	it("expanded mode strips markdown emphasis markers from visible thinking text", () => {
-		const emphasizedSteps = deriveThinkingSteps([
+	it("expanded mode renders markdown as terminal formatting instead of raw markers", () => {
+		const markdownSteps = deriveThinkingSteps([
 			{
 				contentIndex: 0,
-				text: "**Inspecting event listeners**\n\nVerify that refreshes can be triggered safely.",
+				text: "## Inspecting `render.ts`\n\n- Verify that **refreshes** can be triggered safely.",
 			},
 		]);
 		const lines = renderThinkingStepsLines(theme, 80, {
 			mode: "expanded",
-			steps: emphasizedSteps,
+			steps: markdownSteps,
 			activeStepId: undefined,
 			isActive: false,
 		});
 		const joined = stripAnsi(lines.join("\n"));
-		assert.ok(joined.includes("Inspecting event listeners"));
-		assert.ok(!joined.includes("**Inspecting event listeners**"));
+		assert.ok(joined.includes("Inspecting render.ts"));
+		assert.ok(joined.includes("• Verify that refreshes can be triggered safely."));
+		assert.ok(!joined.includes("## Inspecting `render.ts`"));
+		assert.ok(!joined.includes("- Verify that **refreshes** can be triggered safely."));
 		assert.ok(!joined.includes("**"));
+		assert.ok(!joined.includes("`"));
 	});
 
 	it("collapsed active rendering animates without using italics", () => {
