@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { deriveThinkingSteps, iconForThinkingRole, inferThinkingRole, parseThinkingMode, summarizeThinkingText } from "../parse.js";
 import { assertPatchableAssistantMessageComponent, assertThinkingStepsTheme, retainThinkingStepsPatch } from "../internal-patch.js";
@@ -11,6 +13,7 @@ import {
 	getPatchCleanup,
 	getPatchInstallPromise,
 	getPatchRefCount,
+	getThinkingStepsMode,
 	setActiveThinkingState,
 	setPatchCleanup,
 	setPatchInstallPromise,
@@ -81,6 +84,7 @@ interface FakeUI {
 
 interface FakeExtensionContext {
 	hasUI: boolean;
+	cwd: string;
 	ui: FakeUI;
 	sessionManager: { getEntries(): FakeSessionEntry[] };
 }
@@ -126,10 +130,11 @@ function createFakeUI(): FakeUI {
 	};
 }
 
-function createFakeContext(entries: FakeSessionEntry[] = [], hasUI = true): FakeExtensionContext {
+function createFakeContext(entries: FakeSessionEntry[] = [], hasUI = true, cwd = process.cwd()): FakeExtensionContext {
 	const sessionEntries = [...entries];
 	return {
 		hasUI,
+		cwd,
 		ui: createFakeUI(),
 		sessionManager: {
 			getEntries() {
@@ -167,12 +172,12 @@ function createFakeExtensionAPI(): FakeExtensionAPI {
 	};
 }
 
-function createExtensionHarness(entries: FakeSessionEntry[] = [], hasUI = true): {
+function createExtensionHarness(entries: FakeSessionEntry[] = [], hasUI = true, cwd = process.cwd()): {
 	pi: FakeExtensionAPI;
 	ctx: FakeExtensionContext;
 } {
 	const pi = createFakeExtensionAPI();
-	const ctx = createFakeContext(entries, hasUI);
+	const ctx = createFakeContext(entries, hasUI, cwd);
 	thinkingStepsExtension(pi as any);
 	return { pi, ctx };
 }
@@ -186,6 +191,31 @@ function getSingleHandler(pi: FakeExtensionAPI, event: string): FakeEventHandler
 function resetExtensionState(): void {
 	clearActiveThinkingState();
 	setThinkingStepsMode("summary");
+}
+
+async function withPersistenceEnvironment<T>(
+	run: (environment: { cwd: string; otherCwd: string; home: string }) => Promise<T>,
+): Promise<T> {
+	const root = await mkdtemp(join(tmpdir(), "thinking-steps-"));
+	const home = join(root, "home");
+	const cwd = join(root, "project");
+	const otherCwd = join(root, "other-project");
+	await Promise.all([mkdir(home, { recursive: true }), mkdir(cwd, { recursive: true }), mkdir(otherCwd, { recursive: true })]);
+
+	const previousHome = process.env.HOME;
+	process.env.HOME = home;
+
+	try {
+		return await run({ cwd, otherCwd, home });
+	} finally {
+		if (previousHome === undefined) {
+			delete process.env.HOME;
+		} else {
+			process.env.HOME = previousHome;
+		}
+
+		await rm(root, { recursive: true, force: true });
+	}
 }
 
 describe("deriveThinkingSteps", () => {
@@ -786,6 +816,125 @@ describe("thinkingStepsExtension", () => {
 });
 
 describe("patch lifecycle", () => {
+
+describe("thinkingStepsExtension persistence", () => {
+	it("offers scoped completions for project and global defaults", () => {
+		resetExtensionState();
+		const { pi } = createExtensionHarness();
+		const command = pi.commands.get("thinking-steps");
+		assert.ok(command);
+
+		assert.deepEqual(command.getArgumentCompletions?.("g"), [{ value: "global", label: "global" }]);
+		assert.deepEqual(command.getArgumentCompletions?.("project e"), [{ value: "project expanded", label: "expanded" }]);
+		assert.deepEqual(command.getArgumentCompletions?.("project "), [
+			{ value: "project collapsed", label: "collapsed" },
+			{ value: "project summary", label: "summary" },
+			{ value: "project expanded", label: "expanded" },
+			{ value: "project clear", label: "clear" },
+		]);
+	});
+
+	it("restores session, project, and global defaults in precedence order", async () => {
+		await withPersistenceEnvironment(async ({ cwd, otherCwd }) => {
+			resetExtensionState();
+			const { pi, ctx } = createExtensionHarness([], true, cwd);
+			const command = pi.commands.get("thinking-steps");
+			assert.ok(command);
+
+			await command.handler("global collapsed", ctx);
+			assert.deepEqual(ctx.ui.notifications.at(-1), { message: "Thinking view: collapsed (saved for global)", level: "info" });
+
+			await command.handler("project expanded", ctx);
+			assert.deepEqual(ctx.ui.notifications.at(-1), { message: "Thinking view: expanded (saved for project)", level: "info" });
+			assert.deepEqual(pi.appendedEntries.at(-1), {
+				type: "custom",
+				customType: "thinking-steps.mode",
+				data: { mode: "expanded" },
+			});
+
+			resetExtensionState();
+			const projectHarness = createExtensionHarness([], true, cwd);
+			const projectStart = getSingleHandler(projectHarness.pi, "session_start");
+			const projectShutdown = getSingleHandler(projectHarness.pi, "session_shutdown");
+			try {
+				await projectStart({}, projectHarness.ctx);
+				assert.deepEqual(projectHarness.ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: expanded" });
+			} finally {
+				await projectShutdown({}, projectHarness.ctx);
+			}
+
+			resetExtensionState();
+			const globalHarness = createExtensionHarness([], true, otherCwd);
+			const globalStart = getSingleHandler(globalHarness.pi, "session_start");
+			const globalShutdown = getSingleHandler(globalHarness.pi, "session_shutdown");
+			try {
+				await globalStart({}, globalHarness.ctx);
+				assert.deepEqual(globalHarness.ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: collapsed" });
+			} finally {
+				await globalShutdown({}, globalHarness.ctx);
+			}
+
+			resetExtensionState();
+			const sessionHarness = createExtensionHarness(
+				[{ type: "custom", customType: "thinking-steps.mode", data: { mode: "summary" } }],
+				true,
+				cwd,
+			);
+			const sessionStart = getSingleHandler(sessionHarness.pi, "session_start");
+			const sessionShutdown = getSingleHandler(sessionHarness.pi, "session_shutdown");
+			try {
+				await sessionStart({}, sessionHarness.ctx);
+				assert.deepEqual(sessionHarness.ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: summary" });
+			} finally {
+				await sessionShutdown({}, sessionHarness.ctx);
+			}
+		});
+	});
+
+	it("clears project and global defaults for future sessions without changing the current session mode", async () => {
+		await withPersistenceEnvironment(async ({ cwd, otherCwd }) => {
+			resetExtensionState();
+			const { ctx, pi } = createExtensionHarness([], true, cwd);
+			const command = pi.commands.get("thinking-steps");
+			assert.ok(command);
+
+			await command.handler("global collapsed", ctx);
+			await command.handler("project expanded", ctx);
+			assert.equal(getThinkingStepsMode(), "expanded");
+
+			await command.handler("project clear", ctx);
+			assert.equal(getThinkingStepsMode(), "expanded");
+			assert.deepEqual(ctx.ui.notifications.at(-1), { message: "Cleared project thinking view default", level: "info" });
+
+			resetExtensionState();
+			const projectHarness = createExtensionHarness([], true, cwd);
+			const projectStart = getSingleHandler(projectHarness.pi, "session_start");
+			const projectShutdown = getSingleHandler(projectHarness.pi, "session_shutdown");
+			try {
+				await projectStart({}, projectHarness.ctx);
+				assert.deepEqual(projectHarness.ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: collapsed" });
+			} finally {
+				await projectShutdown({}, projectHarness.ctx);
+			}
+
+			setThinkingStepsMode("expanded");
+			await command.handler("global clear", ctx);
+			assert.equal(getThinkingStepsMode(), "expanded");
+			assert.deepEqual(ctx.ui.notifications.at(-1), { message: "Cleared global thinking view default", level: "info" });
+
+			resetExtensionState();
+			const globalHarness = createExtensionHarness([], true, otherCwd);
+			const globalStart = getSingleHandler(globalHarness.pi, "session_start");
+			const globalShutdown = getSingleHandler(globalHarness.pi, "session_shutdown");
+			try {
+				await globalStart({}, globalHarness.ctx);
+				assert.deepEqual(globalHarness.ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: summary" });
+			} finally {
+				await globalShutdown({}, globalHarness.ctx);
+			}
+		});
+	});
+});
 	async function loadAssistantMessageComponent() {
 		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
 			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(

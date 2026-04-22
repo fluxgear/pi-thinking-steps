@@ -51,6 +51,7 @@ Best when you want the complete reasoning text, but rendered more cleanly than r
 - semantic Unicode icons for common reasoning roles
 - active pulse in collapsed mode while thinking is still streaming
 - persistent footer status indicator
+- session-scoped mode history plus optional project and global defaults
 - terminal-first presentation with **no italics**
 - markdown-inspired rendering for:
   - headings
@@ -70,9 +71,26 @@ Best when you want the complete reasoning text, but rendered more cleanly than r
 |---|---|
 | Cycle thinking view | `Alt+T` |
 | Choose a mode interactively | `/thinking-steps` |
-| Set collapsed mode | `/thinking-steps collapsed` |
-| Set summary mode | `/thinking-steps summary` |
-| Set expanded mode | `/thinking-steps expanded` |
+| Set collapsed mode for this session | `/thinking-steps collapsed` |
+| Set summary mode for this session | `/thinking-steps summary` |
+| Set expanded mode for this session | `/thinking-steps expanded` |
+| Save a project default | `/thinking-steps project expanded` |
+| Save a global default | `/thinking-steps global summary` |
+| Clear a project default | `/thinking-steps project clear` |
+| Clear a global default | `/thinking-steps global clear` |
+
+---
+
+## Persistence
+
+Thinking Steps now restores the view mode in this order:
+
+1. the last mode saved in the current session
+2. the project default from `.pi/thinking-steps.json`
+3. the global default from `~/.pi/agent/state/thinking-steps.json`
+4. the built-in default `summary`
+
+Use the plain `/thinking-steps <mode>` commands when you want the choice to stay local to the current session history. Use `project` or `global` when you want new sessions to inherit the same default automatically.
 
 ---
 
@@ -220,6 +238,7 @@ npm run build
 - `index.ts` — extension entry point, commands, shortcut, lifecycle hooks
 - `internal-patch.ts` — Pi runtime patching and cleanup
 - `parse.ts` — thinking-step splitting, summaries, role inference, mode parsing
+- `persistence.ts` — project/global mode preference storage
 - `render.ts` — collapsed / summary / expanded terminal rendering
 - `state.ts` — shared mode, active-thinking state, patch lifecycle state
 - `types.ts` — shared contracts

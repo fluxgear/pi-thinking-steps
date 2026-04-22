@@ -2,42 +2,89 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import { Key } from "@mariozechner/pi-tui";
 import { retainThinkingStepsPatch } from "./internal-patch.js";
+import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
 import { clearActiveThinkingState, getThinkingStepsMode, setActiveThinkingState, setThinkingStepsMode } from "./state.js";
 import type { ThinkingStepsMode } from "./types.js";
+import type { PersistedThinkingStepsPreferenceScope } from "./persistence.js";
+
+type ThinkingStepsCommandScope = "session" | PersistedThinkingStepsPreferenceScope;
+type ThinkingStepsCommandAction =
+	| { type: "set"; scope: ThinkingStepsCommandScope; mode?: ThinkingStepsMode }
+	| { type: "clear"; scope: PersistedThinkingStepsPreferenceScope };
 
 const CUSTOM_ENTRY_TYPE = "thinking-steps.mode";
 const DEFAULT_HIDDEN_LABEL = "Thinking...";
+const MODE_OPTIONS: ThinkingStepsMode[] = ["collapsed", "summary", "expanded"];
+const SCOPE_OPTIONS: PersistedThinkingStepsPreferenceScope[] = ["project", "global"];
 
 function modeStatusText(ctx: ExtensionContext, mode: ThinkingStepsMode): string {
 	return `${ctx.ui.theme.fg("muted", "thinking:")} ${ctx.ui.theme.fg("accent", mode)}`;
+}
+
+function modeChangeMessage(mode: ThinkingStepsMode, scope: ThinkingStepsCommandScope): string {
+	if (scope === "session") {
+		return `Thinking view: ${mode}`;
+	}
+
+	return `Thinking view: ${mode} (saved for ${scope})`;
+}
+
+function invalidUsageMessage(): string {
+	return "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear]";
+}
+
+function notifyUser(ctx: ExtensionContext, message: string, level: "info" | "warning"): void {
+	if (ctx.hasUI) {
+		ctx.ui.notify(message, level);
+		return;
+	}
+
+	if (level === "warning") {
+		console.warn(message);
+		return;
+	}
+
+	console.info(message);
 }
 
 function persistMode(pi: ExtensionAPI, mode: ThinkingStepsMode): void {
 	pi.appendEntry(CUSTOM_ENTRY_TYPE, { mode });
 }
 
-function restoreMode(ctx: ExtensionContext): ThinkingStepsMode {
-	const entries = ctx.sessionManager.getEntries() as Array<{ type?: string; customType?: string; data?: { mode?: ThinkingStepsMode } }>;
+async function restoreMode(ctx: ExtensionContext): Promise<ThinkingStepsMode> {
+	const entries = ctx.sessionManager.getEntries() as Array<{ type?: string; customType?: string; data?: { mode?: string } }>;
 	const saved = entries.filter((entry) => entry.type === "custom" && entry.customType === CUSTOM_ENTRY_TYPE).pop();
-	return saved?.data?.mode ?? "summary";
+	const sessionMode = parseThinkingMode(saved?.data?.mode ?? "");
+	if (sessionMode) return sessionMode;
+
+	const projectMode = await readThinkingStepsModePreference("project", ctx.cwd);
+	if (projectMode) return projectMode;
+
+	const globalMode = await readThinkingStepsModePreference("global", ctx.cwd);
+	return globalMode ?? "summary";
 }
 
-function refreshThinkingUI(ctx: ExtensionContext, announce = false): void {
+function refreshThinkingUI(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	ctx.ui.setHiddenThinkingLabel(DEFAULT_HIDDEN_LABEL);
 	ctx.ui.setStatus("thinking-steps", modeStatusText(ctx, getThinkingStepsMode()));
-	if (announce) {
-		ctx.ui.notify(`Thinking view: ${getThinkingStepsMode()}`, "info");
-	}
 }
 
-function applyMode(pi: ExtensionAPI, ctx: ExtensionContext, mode: ThinkingStepsMode, options?: { persist?: boolean; announce?: boolean }): void {
+function applyMode(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	mode: ThinkingStepsMode,
+	options?: { persistSession?: boolean; announceScope?: ThinkingStepsCommandScope },
+): void {
 	setThinkingStepsMode(mode);
-	if (options?.persist !== false) {
+	if (options?.persistSession !== false) {
 		persistMode(pi, mode);
 	}
-	refreshThinkingUI(ctx, options?.announce === true);
+	refreshThinkingUI(ctx);
+	if (options?.announceScope) {
+		notifyUser(ctx, modeChangeMessage(mode, options.announceScope), "info");
+	}
 }
 
 function cycleMode(current: ThinkingStepsMode): ThinkingStepsMode {
@@ -46,14 +93,87 @@ function cycleMode(current: ThinkingStepsMode): ThinkingStepsMode {
 	return "collapsed";
 }
 
+function parsePreferenceScope(input: string): PersistedThinkingStepsPreferenceScope | undefined {
+	const normalized = input.trim().toLowerCase();
+	if (["project", "proj", "p"].includes(normalized)) return "project";
+	if (["global", "user", "g"].includes(normalized)) return "global";
+	return undefined;
+}
+
+function isClearCommand(input: string): boolean {
+	return ["clear", "reset"].includes(input.trim().toLowerCase());
+}
+
+function parseCommandAction(args: string): ThinkingStepsCommandAction | undefined {
+	const trimmed = args.trim();
+	if (!trimmed) {
+		return { type: "set", scope: "session" };
+	}
+
+	const scope = parsePreferenceScope(trimmed.split(/\s+/, 1)[0] ?? "");
+	if (!scope) {
+		const mode = parseThinkingMode(trimmed);
+		return mode ? { type: "set", scope: "session", mode } : undefined;
+	}
+
+	const tail = trimmed.replace(/^\S+\s*/, "");
+	if (!tail) {
+		return { type: "set", scope };
+	}
+
+	if (isClearCommand(tail)) {
+		return { type: "clear", scope };
+	}
+
+	const mode = parseThinkingMode(tail);
+	return mode ? { type: "set", scope, mode } : undefined;
+}
+
+function buildCompletionItems(values: string[], prefix: string, prefixText = ""): AutocompleteItem[] | null {
+	const normalizedPrefix = prefix.trim().toLowerCase();
+	const items = values
+		.filter((value) => value.startsWith(normalizedPrefix))
+		.map((value) => ({ value: `${prefixText}${value}`, label: value }));
+	return items.length > 0 ? items : null;
+}
+
 function thinkingModeCompletions(prefix: string): AutocompleteItem[] | null {
-	const items: AutocompleteItem[] = [
-		{ value: "collapsed", label: "collapsed" },
-		{ value: "summary", label: "summary" },
-		{ value: "expanded", label: "expanded" },
-	];
-	const filtered = items.filter((item) => item.value.startsWith(prefix.trim().toLowerCase()));
-	return filtered.length > 0 ? filtered : null;
+	const trimmed = prefix.trim();
+	const endsWithWhitespace = /\s$/.test(prefix);
+
+	if (!trimmed) {
+		return [
+			...MODE_OPTIONS.map((value) => ({ value, label: value })),
+			...SCOPE_OPTIONS.map((value) => ({ value, label: value })),
+		];
+	}
+
+	const parts = trimmed.split(/\s+/);
+	if (parts.length === 1 && !endsWithWhitespace) {
+		return buildCompletionItems([...MODE_OPTIONS, ...SCOPE_OPTIONS], parts[0] ?? "");
+	}
+
+	const scope = parsePreferenceScope(parts[0] ?? "");
+	if (!scope) {
+		return null;
+	}
+
+	const valuePrefix = `${scope} `;
+	const nestedPrefix = endsWithWhitespace ? "" : parts.slice(1).join(" " );
+	return buildCompletionItems([...MODE_OPTIONS, "clear"], nestedPrefix, valuePrefix);
+}
+
+async function selectMode(ctx: ExtensionContext): Promise<ThinkingStepsMode | undefined> {
+	if (!ctx.hasUI) {
+		return undefined;
+	}
+
+	const choice = await ctx.ui.select("Thinking view", MODE_OPTIONS);
+	return choice ? parseThinkingMode(choice) : undefined;
+}
+
+function reportPersistenceError(ctx: ExtensionContext, error: unknown): void {
+	notifyUser(ctx, `Thinking steps persistence error: ${error instanceof Error ? error.message : String(error)}`, "warning");
 }
 
 export default function thinkingStepsExtension(pi: ExtensionAPI): void {
@@ -63,21 +183,29 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		description: "Switch thinking view: collapsed, summary, or expanded",
 		getArgumentCompletions: thinkingModeCompletions,
 		handler: async (args, ctx) => {
-			const requestedMode = parseThinkingMode(args);
-			if (requestedMode) {
-				applyMode(pi, ctx, requestedMode, { announce: true });
+			const action = parseCommandAction(args);
+			if (!action) {
+				notifyUser(ctx, invalidUsageMessage(), "warning");
 				return;
 			}
 
-			if (!ctx.hasUI) {
+			if (action.type === "clear") {
+				await clearThinkingStepsModePreference(action.scope, ctx.cwd);
+				refreshThinkingUI(ctx);
+				notifyUser(ctx, `Cleared ${action.scope} thinking view default`, "info");
 				return;
 			}
 
-			const choice = await ctx.ui.select("Thinking view", ["collapsed", "summary", "expanded"]);
-			if (!choice) return;
-			const selectedMode = parseThinkingMode(choice);
-			if (!selectedMode) return;
-			applyMode(pi, ctx, selectedMode, { announce: true });
+			const selectedMode = action.mode ?? (await selectMode(ctx));
+			if (!selectedMode) {
+				return;
+			}
+
+			if (action.scope !== "session") {
+				await writeThinkingStepsModePreference(action.scope, ctx.cwd, selectedMode);
+			}
+
+			applyMode(pi, ctx, selectedMode, { announceScope: action.scope });
 		},
 	});
 
@@ -85,14 +213,22 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		description: "Cycle thinking view (collapsed, summary, expanded)",
 		handler: async (ctx) => {
 			const nextMode = cycleMode(getThinkingStepsMode());
-			applyMode(pi, ctx, nextMode, { announce: true });
+			applyMode(pi, ctx, nextMode, { announceScope: "session" });
 		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		clearActiveThinkingState();
 		releasePatch ??= await retainThinkingStepsPatch();
-		applyMode(pi, ctx, restoreMode(ctx), { persist: false, announce: false });
+
+		let restoredMode: ThinkingStepsMode = "summary";
+		try {
+			restoredMode = await restoreMode(ctx);
+		} catch (error) {
+			reportPersistenceError(ctx, error);
+		}
+
+		applyMode(pi, ctx, restoredMode, { persistSession: false });
 	});
 
 	pi.on("message_start", async (event) => {

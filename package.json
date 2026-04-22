@@ -1,9 +1,36 @@
 {
   "name": "pi-thinking-steps",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "type": "module",
   "main": "index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fluxgear/pi-thinking-steps.git"
+  },
+  "homepage": "https://github.com/fluxgear/pi-thinking-steps#readme",
+  "bugs": {
+    "url": "https://github.com/fluxgear/pi-thinking-steps/issues"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "terminal",
+    "extension",
+    "thinking",
+    "tui"
+  ],
+  "files": [
+    "LICENSE",
+    "README.md",
+    "index.ts",
+    "internal-patch.ts",
+    "parse.ts",
+    "persistence.ts",
+    "render.ts",
+    "state.ts",
+    "types.ts"
+  ],
   "pi": {
     "extensions": [
       "./index.ts"
