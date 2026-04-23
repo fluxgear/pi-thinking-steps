@@ -2,6 +2,7 @@
   "name": "pi-thinking-steps",
   "version": "0.9.9",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
+  "license": "MIT",
   "type": "module",
   "main": "index.ts",
   "repository": {
@@ -21,6 +22,7 @@
     "tui"
   ],
   "files": [
+    "LICENSE",
     "README.md",
     "index.ts",
     "internal-patch.ts",
