@@ -1494,6 +1494,39 @@ describe("state ownership", () => {
 
 		assert.deepEqual(getActiveThinkingState(), { active: true, messageTimestamp: 12, contentIndex: 3 });
 	});
+
+	it("migrates legacy global state snapshots from pre-scope releases", async () => {
+		const stateKey = Symbol.for("pi-extensions.thinking-steps.state");
+		const globalSlot = globalThis as Record<PropertyKey, unknown>;
+		const previousState = globalSlot[stateKey];
+
+		try {
+			globalSlot[stateKey] = {
+				mode: "collapsed",
+				active: { active: true, messageTimestamp: 42, contentIndex: 7 },
+				patchRefCount: 0,
+			};
+
+			const moduleUrl = new URL(`../state.js?legacy=${Date.now()}`, import.meta.url).href;
+			const migratedState = await import(moduleUrl) as typeof import("../state.js");
+
+			assert.equal(migratedState.getThinkingStepsMode(), "collapsed");
+			assert.deepEqual(migratedState.getActiveThinkingState(42), {
+				active: true,
+				messageTimestamp: 42,
+				contentIndex: 7,
+			});
+			assert.doesNotThrow(() => migratedState.clearActiveThinkingState(42));
+			assert.deepEqual(migratedState.getActiveThinkingState(42), { active: false });
+		} finally {
+			if (previousState === undefined) {
+				delete globalSlot[stateKey];
+			} else {
+				globalSlot[stateKey] = previousState;
+			}
+			resetExtensionState();
+		}
+	});
 });
 
 describe("patch lifecycle regression coverage", () => {
