@@ -1,7 +1,7 @@
 import type { Component } from "@mariozechner/pi-tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { deriveThinkingSteps } from "./parse.js";
-import { getActiveThinkingState, getThinkingStepsMode } from "./state.js";
+import { getActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode } from "./state.js";
 import type { DerivedThinkingStep, ThinkingSemanticRole, ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
 
 interface RenderOptions {
@@ -280,6 +280,7 @@ export class ThinkingStepsComponent implements Component {
 	private steps: DerivedThinkingStep[];
 	private widthCache?: number;
 	private cachedLines?: string[];
+	private readonly scopeKey: string;
 
 	constructor(
 		private readonly theme: ThinkingThemeLike,
@@ -287,17 +288,16 @@ export class ThinkingStepsComponent implements Component {
 		blocks: ThinkingSourceBlock[],
 	) {
 		this.steps = deriveThinkingSteps(blocks);
+		this.scopeKey = getCurrentThinkingScopeKey();
 	}
 
 	render(width: number): string[] {
-		const mode = getThinkingStepsMode();
-		const active = getActiveThinkingState();
-		const activeStepId =
-			active.active && active.messageTimestamp === this.messageTimestamp && active.contentIndex !== undefined
-				? [...this.steps].reverse().find((step) => step.contentIndex === active.contentIndex)?.id
-				: undefined;
-		const cacheKeyMatches =
-			this.widthCache === width && this.cachedLines && (mode !== "collapsed" || !active.active || active.messageTimestamp !== this.messageTimestamp);
+		const mode = getThinkingStepsMode(this.scopeKey);
+		const active = getActiveThinkingState(this.messageTimestamp);
+		const activeStepId = active.active && active.contentIndex !== undefined
+			? [...this.steps].reverse().find((step) => step.contentIndex === active.contentIndex)?.id
+			: undefined;
+		const cacheKeyMatches = this.widthCache === width && this.cachedLines && (mode !== "collapsed" || !active.active);
 		if (cacheKeyMatches && this.cachedLines) {
 			return this.cachedLines;
 		}
@@ -306,11 +306,11 @@ export class ThinkingStepsComponent implements Component {
 			mode,
 			steps: this.steps,
 			activeStepId,
-			isActive: active.active && active.messageTimestamp === this.messageTimestamp,
+			isActive: active.active,
 			nowMs: Date.now(),
 		});
 
-		if (!(mode === "collapsed" && active.active && active.messageTimestamp === this.messageTimestamp)) {
+		if (!(mode === "collapsed" && active.active)) {
 			this.widthCache = width;
 			this.cachedLines = lines;
 		} else {

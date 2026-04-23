@@ -205,6 +205,7 @@ That means:
 
 - upstream Pi internal changes can break the patch layer
 - keeping this extension in sync with Pi releases matters
+- Pi package upgrades should be deliberate compatibility changes: update the pinned versions, refresh `package-lock.json`, and rerun `npm test`
 - the test suite is part of the maintenance contract, not an optional extra
 
 If Pi changes its internal renderer shape, this extension may need updates even if the public Pi CLI still works normally.
@@ -273,4 +274,4 @@ For release points, use the repository tags.
 
 ## License
 
-See [`LICENSE`](./LICENSE).
+This repository does not currently ship a standalone `LICENSE` file.

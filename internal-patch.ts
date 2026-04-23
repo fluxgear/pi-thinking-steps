@@ -136,6 +136,8 @@ async function installPatch(): Promise<() => void> {
 	const originalSetHideThinkingBlock = prototype.setHideThinkingBlock;
 	const originalSetHiddenThinkingLabel = prototype.setHiddenThinkingLabel;
 
+	const normalizeHiddenThinkingLabel = (label: string): string => label.replace(/\u2060+$/gu, "");
+
 	const restoreOriginalMethods = (): void => {
 		if (prototype.updateContent !== originalUpdateContent) {
 			prototype.updateContent = originalUpdateContent;
@@ -148,25 +150,113 @@ async function installPatch(): Promise<() => void> {
 		}
 	};
 
-	const fallbackToOriginalSetHideThinkingBlock = (instance: AssistantMessageComponentPrototype, hide: boolean): void => {
-		instance.hideThinkingBlock = hide;
-		if (!instance.lastMessage) return;
-		fallbackToOriginalUpdateContent(instance, instance.lastMessage, originalUpdateContent);
+	const withOriginalInstanceMethods = <T>(instance: AssistantMessageComponentPrototype, callback: () => T): T => {
+		const ownUpdateContent = Object.prototype.hasOwnProperty.call(instance, "updateContent");
+		const ownSetHideThinkingBlock = Object.prototype.hasOwnProperty.call(instance, "setHideThinkingBlock");
+		const ownSetHiddenThinkingLabel = Object.prototype.hasOwnProperty.call(instance, "setHiddenThinkingLabel");
+		const previousUpdateContent = instance.updateContent;
+		const previousSetHideThinkingBlock = instance.setHideThinkingBlock;
+		const previousSetHiddenThinkingLabel = instance.setHiddenThinkingLabel;
+
+		instance.updateContent = originalUpdateContent;
+		instance.setHideThinkingBlock = originalSetHideThinkingBlock;
+		instance.setHiddenThinkingLabel = originalSetHiddenThinkingLabel;
+
+		try {
+			return callback();
+		} finally {
+			if (ownUpdateContent) {
+				instance.updateContent = previousUpdateContent;
+			} else {
+				delete (instance as unknown as Record<string, unknown>).updateContent;
+			}
+
+			if (ownSetHideThinkingBlock) {
+				instance.setHideThinkingBlock = previousSetHideThinkingBlock;
+			} else {
+				delete (instance as unknown as Record<string, unknown>).setHideThinkingBlock;
+			}
+
+			if (ownSetHiddenThinkingLabel) {
+				instance.setHiddenThinkingLabel = previousSetHiddenThinkingLabel;
+			} else {
+				delete (instance as unknown as Record<string, unknown>).setHiddenThinkingLabel;
+			}
+		}
+	};
+
+	const reportFallback = (stage: string, error: unknown): void => {
+		console.warn(`Thinking Steps patch warning: falling back to Pi renderer during ${stage}.`, error);
+	};
+
+	const fallbackErrorMessage = "Thinking Steps patch failed: Pi internals are incompatible and fallback rendering also failed.";
+
+	const fallbackToOriginalUpdateContent = (
+		instance: AssistantMessageComponentPrototype,
+		message: AssistantMessage,
+		stage: string,
+		originalError?: unknown,
+	): void => {
+		try {
+			withOriginalInstanceMethods(instance, () => {
+				originalUpdateContent.call(instance, message);
+			});
+		} catch (fallbackError) {
+			throw new Error(fallbackErrorMessage, {
+				cause: originalError ? { patchError: originalError, fallbackError } : fallbackError,
+			});
+		}
+
+		if (originalError) {
+			reportFallback(stage, originalError);
+		}
+	};
+
+	const fallbackToOriginalSetHideThinkingBlock = (
+		instance: AssistantMessageComponentPrototype,
+		hide: boolean,
+		originalError?: unknown,
+	): void => {
+		try {
+			withOriginalInstanceMethods(instance, () => {
+				originalSetHideThinkingBlock.call(instance, hide);
+			});
+		} catch (fallbackError) {
+			throw new Error(fallbackErrorMessage, {
+				cause: originalError ? { patchError: originalError, fallbackError } : fallbackError,
+			});
+		}
+
+		if (originalError) {
+			reportFallback("setHideThinkingBlock", originalError);
+		}
 	};
 
 	const fallbackToOriginalSetHiddenThinkingLabel = (
 		instance: AssistantMessageComponentPrototype,
 		label: string,
+		originalError?: unknown,
 	): void => {
-		instance.hiddenThinkingLabel = label;
-		if (!instance.lastMessage) return;
-		fallbackToOriginalUpdateContent(instance, instance.lastMessage, originalUpdateContent);
+		const normalizedLabel = normalizeHiddenThinkingLabel(label);
+		try {
+			withOriginalInstanceMethods(instance, () => {
+				originalSetHiddenThinkingLabel.call(instance, normalizedLabel);
+			});
+		} catch (fallbackError) {
+			throw new Error(fallbackErrorMessage, {
+				cause: originalError ? { patchError: originalError, fallbackError } : fallbackError,
+			});
+		}
+
+		if (originalError) {
+			reportFallback("setHiddenThinkingLabel", originalError);
+		}
 	};
 
 	const patchedUpdateContent = function patchedUpdateContent(this: AssistantMessageComponentPrototype, message: AssistantMessage): void {
 		this.lastMessage = message;
 		if (!hasPatchableContentContainer(this)) {
-			fallbackToOriginalUpdateContent(this, message, originalUpdateContent);
+			fallbackToOriginalUpdateContent(this, message, "updateContent");
 			return;
 		}
 
@@ -216,8 +306,8 @@ async function installPatch(): Promise<() => void> {
 					this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 1, 0));
 				}
 			}
-		} catch {
-			fallbackToOriginalUpdateContent(this, message, originalUpdateContent);
+		} catch (error) {
+			fallbackToOriginalUpdateContent(this, message, "updateContent", error);
 		}
 	};
 
@@ -231,8 +321,8 @@ async function installPatch(): Promise<() => void> {
 		if (!this.lastMessage) return;
 		try {
 			this.updateContent(this.lastMessage);
-		} catch {
-			fallbackToOriginalSetHideThinkingBlock(this, hide);
+		} catch (error) {
+			fallbackToOriginalSetHideThinkingBlock(this, hide, error);
 		}
 	};
 
@@ -240,17 +330,18 @@ async function installPatch(): Promise<() => void> {
 		this: AssistantMessageComponentPrototype,
 		label: string,
 	): void {
+		const normalizedLabel = normalizeHiddenThinkingLabel(label);
 		if (!hasPatchableContentContainer(this)) {
-			fallbackToOriginalSetHiddenThinkingLabel(this, label);
+			fallbackToOriginalSetHiddenThinkingLabel(this, normalizedLabel);
 			return;
 		}
 
-		this.hiddenThinkingLabel = label;
+		this.hiddenThinkingLabel = normalizedLabel;
 		if (!this.lastMessage) return;
 		try {
 			this.updateContent(this.lastMessage);
-		} catch {
-			fallbackToOriginalSetHiddenThinkingLabel(this, label);
+		} catch (error) {
+			fallbackToOriginalSetHiddenThinkingLabel(this, normalizedLabel, error);
 		}
 	};
 

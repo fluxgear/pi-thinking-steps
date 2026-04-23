@@ -140,7 +140,7 @@ export function splitThinkingIntoStepTexts(text: string): string[] {
 				continuationIndex += 1;
 			}
 
-			if (continuationIndex < mergedChunks.length && isListParagraphChunk(mergedChunks[continuationIndex]!)) {
+			if (continuationIndex === mergedChunks.length || isListParagraphChunk(mergedChunks[continuationIndex]!)) {
 				steps[steps.length - 1] = previousStep + "\n\n" + continuationChunks.join("\n\n");
 				index = continuationIndex - 1;
 				continue;
@@ -216,10 +216,20 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 	};
 
 	const splitSentences = (value: string): string[] => {
-		const dotPlaceholder = "__PI_THINKING_DOT__";
-		const protectedValue = value.replace(/(\b[a-z0-9_-]+)\.(ts|tsx|js|jsx|json|md|txt|yml|yaml|lock)\b/gi, `$1${dotPlaceholder}$2`);
+		const placeholders = new Map<string, string>();
+		const protectedValue = value.replace(/\b(?:[a-z0-9_-]+[/.])+[a-z0-9_-]+\b/gi, (match) => {
+			const token = `__PI_THINKING_PATH_${placeholders.size}__`;
+			placeholders.set(token, match);
+			return token;
+		});
 		return (protectedValue.match(/[^.!?\n]+(?:[.!?]+|$)/g) ?? [protectedValue])
-			.map((sentence) => sentence.replaceAll(dotPlaceholder, ".").trim())
+			.map((sentence) => {
+				let restored = sentence.trim();
+				for (const [token, original] of placeholders) {
+					restored = restored.replaceAll(token, original);
+				}
+				return restored;
+			})
 			.filter(Boolean);
 	};
 

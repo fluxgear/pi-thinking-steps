@@ -4,7 +4,7 @@ import { Key } from "@mariozechner/pi-tui";
 import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
-import { clearActiveThinkingState, getThinkingStepsMode, setActiveThinkingState, setThinkingStepsMode } from "./state.js";
+import { clearActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, registerThinkingPatchRelease, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
 import type { ThinkingStepsMode } from "./types.js";
 import type { PersistedThinkingStepsPreferenceScope } from "./persistence.js";
 
@@ -52,23 +52,36 @@ function persistMode(pi: ExtensionAPI, mode: ThinkingStepsMode): void {
 	pi.appendEntry(CUSTOM_ENTRY_TYPE, { mode });
 }
 
+async function readRestoredModePreference(
+	ctx: ExtensionContext,
+	scope: PersistedThinkingStepsPreferenceScope,
+): Promise<ThinkingStepsMode | undefined> {
+	try {
+		return await readThinkingStepsModePreference(scope, ctx.cwd);
+	} catch (error) {
+		reportPersistenceError(ctx, error);
+		return undefined;
+	}
+}
+
 async function restoreMode(ctx: ExtensionContext): Promise<ThinkingStepsMode> {
 	const entries = ctx.sessionManager.getEntries() as Array<{ type?: string; customType?: string; data?: { mode?: string } }>;
 	const saved = entries.filter((entry) => entry.type === "custom" && entry.customType === CUSTOM_ENTRY_TYPE).pop();
 	const sessionMode = parseThinkingMode(saved?.data?.mode ?? "");
 	if (sessionMode) return sessionMode;
 
-	const projectMode = await readThinkingStepsModePreference("project", ctx.cwd);
+	const projectMode = await readRestoredModePreference(ctx, "project");
 	if (projectMode) return projectMode;
 
-	const globalMode = await readThinkingStepsModePreference("global", ctx.cwd);
+	const globalMode = await readRestoredModePreference(ctx, "global");
 	return globalMode ?? "summary";
 }
 
 function refreshThinkingUI(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
-	ctx.ui.setHiddenThinkingLabel(DEFAULT_HIDDEN_LABEL);
-	ctx.ui.setStatus("thinking-steps", modeStatusText(ctx, getThinkingStepsMode()));
+	setCurrentThinkingScopeKey(ctx.cwd);
+	ctx.ui.setHiddenThinkingLabel(nextThinkingRefreshLabel(DEFAULT_HIDDEN_LABEL, ctx.cwd));
+	ctx.ui.setStatus("thinking-steps", modeStatusText(ctx, getThinkingStepsMode(ctx.cwd)));
 }
 
 function applyMode(
@@ -77,7 +90,8 @@ function applyMode(
 	mode: ThinkingStepsMode,
 	options?: { persistSession?: boolean; announceScope?: ThinkingStepsCommandScope },
 ): void {
-	setThinkingStepsMode(mode);
+	setCurrentThinkingScopeKey(ctx.cwd);
+	setThinkingStepsMode(mode, ctx.cwd);
 	if (options?.persistSession !== false) {
 		persistMode(pi, mode);
 	}
@@ -181,8 +195,6 @@ function reportPatchError(ctx: ExtensionContext, error: unknown): void {
 }
 
 export default function thinkingStepsExtension(pi: ExtensionAPI): void {
-	const patchReleases: Array<() => Promise<void>> = [];
-
 	pi.registerCommand("thinking-steps", {
 		description: "Switch thinking view: collapsed, summary, or expanded",
 		getArgumentCompletions: thinkingModeCompletions,
@@ -227,32 +239,30 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	pi.registerShortcut(Key.alt("t"), {
 		description: "Cycle thinking view (collapsed, summary, expanded)",
 		handler: async (ctx) => {
-			const nextMode = cycleMode(getThinkingStepsMode());
+			const nextMode = cycleMode(getThinkingStepsMode(ctx.cwd));
 			applyMode(pi, ctx, nextMode, { announceScope: "session" });
 		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		clearActiveThinkingState();
+		setCurrentThinkingScopeKey(ctx.cwd);
+		clearActiveThinkingState(undefined, ctx.cwd);
 		try {
-			patchReleases.push(await retainThinkingStepsPatch());
+			registerThinkingPatchRelease(ctx.cwd, await retainThinkingStepsPatch());
 		} catch (error) {
 			reportPatchError(ctx, error);
 		}
 
-		let restoredMode: ThinkingStepsMode = "summary";
-		try {
-			restoredMode = await restoreMode(ctx);
-		} catch (error) {
-			reportPersistenceError(ctx, error);
-		}
-
+		const restoredMode = await restoreMode(ctx);
 		applyMode(pi, ctx, restoredMode, { persistSession: false });
 	});
 
 	pi.on("message_start", async (event) => {
 		if (event.message.role === "assistant") {
-			clearActiveThinkingState();
+			const timestamp = typeof (event.message as { timestamp?: unknown }).timestamp === "number"
+				? (event.message as { timestamp: number }).timestamp
+				: undefined;
+			clearActiveThinkingState(timestamp, timestamp === undefined ? getCurrentThinkingScopeKey() : undefined);
 		}
 	});
 
@@ -264,7 +274,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 				active: true,
 				messageTimestamp: event.message.timestamp,
 				contentIndex: assistantEvent.contentIndex,
-			});
+			}, getCurrentThinkingScopeKey());
 			return;
 		}
 
@@ -277,27 +287,31 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			assistantEvent.type === "toolcall_delta" ||
 			assistantEvent.type === "toolcall_end"
 		) {
-			clearActiveThinkingState();
+			clearActiveThinkingState(event.message.timestamp);
 		}
 	});
 
 	pi.on("message_end", async (event) => {
 		if (event.message.role === "assistant") {
-			clearActiveThinkingState();
+			const timestamp = typeof (event.message as { timestamp?: unknown }).timestamp === "number"
+				? (event.message as { timestamp: number }).timestamp
+				: undefined;
+			clearActiveThinkingState(timestamp, timestamp === undefined ? getCurrentThinkingScopeKey() : undefined);
 		}
 	});
 
 	pi.on("agent_end", async () => {
-		clearActiveThinkingState();
+		clearActiveThinkingState(undefined, getCurrentThinkingScopeKey());
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		clearActiveThinkingState();
+		setCurrentThinkingScopeKey(ctx.cwd);
+		clearActiveThinkingState(undefined, ctx.cwd);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("thinking-steps", undefined);
 		}
 
-		const releasePatch = patchReleases.pop();
+		const releasePatch = takeThinkingPatchRelease(ctx.cwd);
 		if (!releasePatch) {
 			return;
 		}

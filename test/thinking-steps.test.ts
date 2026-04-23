@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { deriveThinkingSteps, iconForThinkingRole, inferThinkingRole, parseThinkingMode, summarizeThinkingText } from "../parse.js";
 import { assertPatchableAssistantMessageComponent, assertThinkingStepsTheme, retainThinkingStepsPatch } from "../internal-patch.js";
-import { renderThinkingStepsLines } from "../render.js";
+import { ThinkingStepsComponent, renderThinkingStepsLines } from "../render.js";
 import {
 	clearActiveThinkingState,
 	getActiveThinkingState,
@@ -14,7 +14,9 @@ import {
 	getPatchInstallPromise,
 	getPatchRefCount,
 	getThinkingStepsMode,
+	resetThinkingStepsViewState,
 	setActiveThinkingState,
+	setCurrentThinkingScopeKey,
 	setPatchCleanup,
 	setPatchInstallPromise,
 	setThinkingStepsMode,
@@ -72,6 +74,7 @@ type FakeEventHandler = (...args: any[]) => Promise<void>;
 interface FakeUI {
 	theme: ThinkingThemeLike;
 	hiddenThinkingLabels: string[];
+	hiddenThinkingLabelEffects: Array<(label: string) => void>;
 	statuses: Array<{ key: string; value: string | undefined }>;
 	notifications: Array<{ message: string; level: string }>;
 	selectCalls: Array<{ title: string; options: string[] }>;
@@ -102,6 +105,7 @@ interface FakeExtensionAPI {
 
 function createFakeUI(): FakeUI {
 	const hiddenThinkingLabels: string[] = [];
+	const hiddenThinkingLabelEffects: Array<(label: string) => void> = [];
 	const statuses: Array<{ key: string; value: string | undefined }> = [];
 	const notifications: Array<{ message: string; level: string }> = [];
 	const selectCalls: Array<{ title: string; options: string[] }> = [];
@@ -110,12 +114,16 @@ function createFakeUI(): FakeUI {
 	return {
 		theme: createPlainTheme(),
 		hiddenThinkingLabels,
+		hiddenThinkingLabelEffects,
 		statuses,
 		notifications,
 		selectCalls,
 		selectionQueue,
 		setHiddenThinkingLabel(label: string) {
 			hiddenThinkingLabels.push(label);
+			for (const effect of hiddenThinkingLabelEffects) {
+				effect(label);
+			}
 		},
 		setStatus(key: string, value: string | undefined) {
 			statuses.push({ key, value });
@@ -188,9 +196,11 @@ function getSingleHandler(pi: FakeExtensionAPI, event: string): FakeEventHandler
 	return handlers[0]!;
 }
 
-function resetExtensionState(): void {
+function resetExtensionState(scopeKey = process.cwd()): void {
+	resetThinkingStepsViewState();
+	setCurrentThinkingScopeKey(scopeKey);
+	setThinkingStepsMode("summary", scopeKey);
 	clearActiveThinkingState();
-	setThinkingStepsMode("summary");
 }
 
 async function withPersistenceEnvironment<T>(
@@ -736,6 +746,74 @@ describe("thinkingStepsExtension", () => {
 		}
 	});
 
+	it("rerenders a live patched component through public controls without relying on same-value labels", async () => {
+		resetExtensionState("/scope-a");
+		const { pi, ctx } = createExtensionHarness([], true, "/scope-a");
+		const sessionStart = getSingleHandler(pi, "session_start");
+		const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+		const command = pi.commands.get("thinking-steps");
+		const shortcut = pi.shortcuts[0];
+		assert.ok(command);
+		assert.ok(shortcut);
+
+		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
+			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void } }>(
+				"dist/modes/interactive/components/assistant-message.js",
+			),
+			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				"dist/modes/interactive/theme/theme.js",
+			),
+		]);
+		initTheme("dark", true);
+
+		try {
+			await sessionStart({}, ctx);
+			const message = {
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				timestamp: 333,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				content: [
+					{ type: "thinking", thinking: "Inspect the current rendering pipeline.\n\nCompare the public extension hooks against AssistantMessageComponent.\n\nVerify that refreshes can be triggered safely." },
+					{ type: "text", text: "Final answer." },
+				],
+			} as const;
+
+			const component = new AssistantMessageComponent(message, false);
+			ctx.ui.hiddenThinkingLabelEffects.push((label) => component.setHiddenThinkingLabel(label));
+
+			let lines = component.render(100).map(stripAnsi);
+			assert.ok(lines.some((line) => line.includes("Thinking Steps · Summary")));
+			const firstRefreshLabel = ctx.ui.hiddenThinkingLabels.at(-1);
+
+			await command.handler("collapsed", ctx);
+			lines = component.render(100).map(stripAnsi);
+			assert.ok(lines.some((line) => line.includes("Thinking")));
+			assert.ok(lines.every((line) => !line.includes("Thinking Steps · Summary")));
+			const secondRefreshLabel = ctx.ui.hiddenThinkingLabels.at(-1);
+			assert.notEqual(secondRefreshLabel, firstRefreshLabel);
+
+			await shortcut.handler(ctx);
+			lines = component.render(100).map(stripAnsi);
+			assert.ok(lines.some((line) => line.includes("Thinking Steps · Summary")));
+			const thirdRefreshLabel = ctx.ui.hiddenThinkingLabels.at(-1);
+			assert.notEqual(thirdRefreshLabel, secondRefreshLabel);
+		} finally {
+			await sessionShutdown({}, ctx);
+			resetExtensionState();
+		}
+	});
+
 	it("uses interactive selection when no mode argument is provided", async () => {
 		resetExtensionState();
 		const { pi, ctx } = createExtensionHarness();
@@ -892,6 +970,29 @@ describe("thinkingStepsExtension persistence", () => {
 				assert.deepEqual(sessionHarness.ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: summary" });
 			} finally {
 				await sessionShutdown({}, sessionHarness.ctx);
+			}
+		});
+	});
+
+	it("restores a valid global default when the project default is malformed", async () => {
+		await withPersistenceEnvironment(async ({ cwd, home }) => {
+			await mkdir(join(cwd, ".pi"), { recursive: true });
+			await mkdir(join(home, ".pi", "agent", "state"), { recursive: true });
+			await writeFile(join(cwd, ".pi", "thinking-steps.json"), "{ not json", "utf8");
+			await writeFile(join(home, ".pi", "agent", "state", "thinking-steps.json"), `${JSON.stringify({ mode: "collapsed" }, null, 2)}\n`, "utf8");
+
+			resetExtensionState(cwd);
+			const { pi, ctx } = createExtensionHarness([], true, cwd);
+			const sessionStart = getSingleHandler(pi, "session_start");
+			const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+
+			try {
+				await sessionStart({}, ctx);
+				assert.equal(getThinkingStepsMode(cwd), "collapsed");
+				assert.deepEqual(ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: collapsed" });
+				assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("Thinking steps persistence error:")));
+			} finally {
+				await sessionShutdown({}, ctx);
 			}
 		});
 	});
@@ -1584,6 +1685,28 @@ describe("thinkingStepsExtension failure paths", () => {
 			resetExtensionState();
 		}
 	});
+
+	it("releases a retained patch from a new extension instance for the same scope", async () => {
+		resetExtensionState("/scope-reload");
+		const firstHarness = createExtensionHarness([], true, "/scope-reload");
+		const secondHarness = createExtensionHarness([], true, "/scope-reload");
+		const firstStart = getSingleHandler(firstHarness.pi, "session_start");
+		const secondShutdown = getSingleHandler(secondHarness.pi, "session_shutdown");
+
+		try {
+			assert.equal(getPatchRefCount(), 0);
+			await firstStart({}, firstHarness.ctx);
+			assert.equal(getPatchRefCount(), 1);
+
+			await secondShutdown({}, secondHarness.ctx);
+			assert.equal(getPatchRefCount(), 0);
+		} finally {
+			while (getPatchRefCount() > 0) {
+				await secondShutdown({}, secondHarness.ctx);
+			}
+			resetExtensionState();
+		}
+	});
 });
 
 describe("integration patch fallback paths", () => {
@@ -1636,13 +1759,24 @@ describe("integration patch fallback paths", () => {
 			return originalAddChild(child);
 		}) as typeof container.addChild;
 
+		const originalWarn = console.warn;
+		const warnings: unknown[][] = [];
+		console.warn = (...args: unknown[]) => {
+			warnings.push(args);
+		};
+
 		try {
 			component.setHiddenThinkingLabel("fallback-refresh");
 			const lines = component.render(100).map(stripAnsi).join("\n");
 			assert.ok(lines.includes("Inspect the current renderer implementation."));
 			assert.ok(lines.includes("Final answer."));
 			assert.ok(!lines.includes("Thinking Steps ·"));
+			assert.ok(warnings.some(([message, error]) => typeof message === "string"
+				&& message.includes("falling back to Pi renderer during updateContent")
+				&& error instanceof Error
+				&& error.message.includes("simulate thinking-steps render failure")));
 		} finally {
+			console.warn = originalWarn;
 			container.addChild = originalAddChild;
 			await release();
 		}
@@ -1679,6 +1813,9 @@ describe("integration patch fallback paths", () => {
 			throw new Error("simulate setter rerender failure");
 		};
 
+		const originalWarn = console.warn;
+		console.warn = () => {};
+
 		try {
 			component.setHideThinkingBlock(true);
 			component.setHiddenThinkingLabel("fallback");
@@ -1688,6 +1825,7 @@ describe("integration patch fallback paths", () => {
 			assert.ok(lines.includes("fallback"));
 			assert.ok(!lines.includes("Thinking Steps ·"));
 		} finally {
+			console.warn = originalWarn;
 			patchedComponent.updateContent = originalUpdateContent;
 			await release();
 		}
@@ -1804,13 +1942,28 @@ Capture concrete evidence for long-token wrapping and list continuation handling
 		assert.equal(steps[1]?.body, "2. Verify the fix with regression tests.");
 	});
 
+	it("keeps a trailing list continuation attached to the final list item", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "1. Inspect the current renderer implementation.\n\nCapture evidence from the final list item before concluding.",
+			},
+		]);
+
+		assert.equal(steps.length, 1);
+		assert.equal(
+			steps[0]?.body,
+			"1. Inspect the current renderer implementation.\n\nCapture evidence from the final list item before concluding.",
+		);
+	});
+
 	it("preserves comma-heavy file enumerations without inventing sequential connectors", () => {
 		const summary = summarizeThinkingText(
 			"I need to inspect parse.ts, render.ts, and test/thinking-steps.test.ts before patching.",
 		);
 
 		assert.match(summary, /parse\.ts/i);
-		assert.match(summary, /render\.ts|test\/thinking-steps\.test\.ts/i);
+		assert.match(summary, /test\/thinking-steps\.test\.ts/i);
 		assert.doesNotMatch(summary, /, then/i);
 	});
 
@@ -1821,5 +1974,49 @@ Capture concrete evidence for long-token wrapping and list continuation handling
 
 		assert.match(summary, /npm test|node --import tsx/i);
 		assert.doesNotMatch(summary, /, then/i);
+	});
+});
+
+describe("scope-aware runtime state", () => {
+	it("renders components with the mode captured for their thinking scope", () => {
+		resetExtensionState("/scope-a");
+		setCurrentThinkingScopeKey("/scope-a");
+		setThinkingStepsMode("collapsed", "/scope-a");
+		const collapsedComponent = new ThinkingStepsComponent(createPlainTheme(), 401, [{ contentIndex: 0, text: "Inspect the current renderer implementation." }]);
+
+		setCurrentThinkingScopeKey("/scope-b");
+		setThinkingStepsMode("expanded", "/scope-b");
+		const expandedComponent = new ThinkingStepsComponent(createPlainTheme(), 402, [{ contentIndex: 0, text: "Inspect the current renderer implementation." }]);
+
+		const collapsedLines = collapsedComponent.render(80).map(stripAnsi).join("\n");
+		const expandedLines = expandedComponent.render(80).map(stripAnsi).join("\n");
+
+		assert.ok(collapsedLines.includes("Thinking"));
+		assert.ok(!collapsedLines.includes("Thinking Steps · Expanded"));
+		assert.ok(expandedLines.includes("Thinking Steps · Expanded"));
+	});
+});
+
+describe("repo metadata contracts", () => {
+	it("keeps published files, pinned Pi dependencies, and docs aligned", async () => {
+		const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
+			files: string[];
+			devDependencies: Record<string, string>;
+		};
+		for (const file of packageJson.files) {
+			await assert.doesNotReject(readFile(file, "utf8"));
+		}
+		assert.equal(packageJson.devDependencies["@mariozechner/pi-ai"], "0.69.0");
+		assert.equal(packageJson.devDependencies["@mariozechner/pi-coding-agent"], "0.69.0");
+		assert.equal(packageJson.devDependencies["@mariozechner/pi-tui"], "0.69.0");
+		assert.ok(!Object.values(packageJson.devDependencies).includes("latest"));
+
+		const readme = await readFile("README.md", "utf8");
+		assert.doesNotMatch(readme, /\[\`LICENSE\`\]\(\.\/LICENSE\)/);
+
+		const agents = await readFile("AGENTS.md", "utf8");
+		assert.match(agents, /project clear/);
+		assert.match(agents, /global clear/);
+		assert.match(agents, /session -> project -> global -> summary/);
 	});
 });
