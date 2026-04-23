@@ -34,7 +34,7 @@ export function setThinkingStepsMode(mode: ThinkingStepsMode): void {
 }
 
 export function getActiveThinkingState(): ActiveThinkingState {
-	return globalState.active;
+	return { ...globalState.active };
 }
 
 export function setActiveThinkingState(state: ActiveThinkingState): void {

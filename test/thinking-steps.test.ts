@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -451,12 +451,17 @@ describe("renderThinkingStepsLines", () => {
 	});
 
 	it("collapsed mode wraps long summaries instead of truncating them with an ellipsis", () => {
-		const longSummarySteps = deriveThinkingSteps([
+		const [baseStep] = deriveThinkingSteps([
 			{
 				contentIndex: 0,
-				text: "I’m considering how we can connect and orient ourselves. It seems like using Larra edit workflows could be helpful here. I need to know the arguments for it, so I might look into using MCP to describe the tools available to me. It could be useful to inspect the connection first, just to make sure everything is set up right before diving into the workflows. Let's see what we can find!",
+				text: "Inspect the current renderer implementation.",
 			},
 		]);
+		assert.ok(baseStep);
+		const longSummarySteps = [{
+			...baseStep,
+			summary: "Inspect the current renderer implementation and verify the refresh path after mode changes carefully.",
+		}];
 		const lines = renderThinkingStepsLines(theme, 48, {
 			mode: "collapsed",
 			steps: longSummarySteps,
@@ -470,7 +475,7 @@ describe("renderThinkingStepsLines", () => {
 			.replace(/\bThinking\b/g, " ")
 			.replace(/\s+/g, " ")
 			.trim();
-		assert.match(normalized, /Larra edit workflows|inspect the connection first/i);
+		assert.match(normalized, /renderer implementation|refresh path after mode changes/i);
 		assert.ok(!normalized.includes("…"));
 	});
 
@@ -1372,5 +1377,449 @@ describe("renderThinkingStepsLines single-emphasis consistency", () => {
 		assert.ok(joined.includes("• Verify that refreshes can be triggered safely."));
 		assert.ok(!joined.includes("_Inspecting_"));
 		assert.ok(!joined.includes("*Verify*"));
+	});
+});
+
+
+describe("state ownership", () => {
+	it("returns a defensive copy of active thinking state", () => {
+		resetExtensionState();
+		setActiveThinkingState({ active: true, messageTimestamp: 12, contentIndex: 3 });
+
+		const snapshot = getActiveThinkingState();
+		snapshot.active = false;
+		snapshot.messageTimestamp = 999;
+		snapshot.contentIndex = 42;
+
+		assert.deepEqual(getActiveThinkingState(), { active: true, messageTimestamp: 12, contentIndex: 3 });
+	});
+});
+
+describe("patch lifecycle regression coverage", () => {
+	async function loadAssistantMessageComponentForPatchLifecycle() {
+		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
+			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(
+				"dist/modes/interactive/components/assistant-message.js",
+			),
+			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				"dist/modes/interactive/theme/theme.js",
+			),
+		]);
+		initTheme("dark", true);
+		return AssistantMessageComponent;
+	}
+
+	it("rolls back partially applied prototype changes when patch install fails", async () => {
+		const AssistantMessageComponent = await loadAssistantMessageComponentForPatchLifecycle();
+		const prototype = AssistantMessageComponent.prototype as {
+			updateContent(message: unknown): void;
+			setHideThinkingBlock(hide: boolean): void;
+			setHiddenThinkingLabel(label: string): void;
+		};
+		const originalUpdateContent = prototype.updateContent;
+		const originalSetHideThinkingBlock = prototype.setHideThinkingBlock;
+		const hiddenLabelDescriptor = Object.getOwnPropertyDescriptor(prototype, "setHiddenThinkingLabel");
+		assert.ok(hiddenLabelDescriptor);
+
+		Object.defineProperty(prototype, "setHiddenThinkingLabel", {
+			...hiddenLabelDescriptor,
+			writable: false,
+		});
+
+		try {
+			await assert.rejects(() => retainThinkingStepsPatch(), /prototype is incompatible with thinking-steps patching|read only|Cannot assign/);
+			assert.equal(getPatchRefCount(), 0);
+			assert.equal(getPatchCleanup(), undefined);
+			assert.equal(getPatchInstallPromise(), undefined);
+			assert.equal(prototype.updateContent, originalUpdateContent);
+			assert.equal(prototype.setHideThinkingBlock, originalSetHideThinkingBlock);
+		} finally {
+			Object.defineProperty(prototype, "setHiddenThinkingLabel", hiddenLabelDescriptor);
+			const cleanup = getPatchCleanup();
+			setPatchCleanup(undefined);
+			setPatchInstallPromise(undefined);
+			await cleanup?.();
+		}
+	});
+
+	it("retains the cleanup handle when final release cleanup throws", async () => {
+		const release = await retainThinkingStepsPatch();
+		const installedCleanup = getPatchCleanup();
+		assert.ok(installedCleanup);
+
+		const failingCleanup = async () => {
+			throw new Error("cleanup failed");
+		};
+
+		try {
+			setPatchCleanup(failingCleanup);
+			await assert.rejects(() => release(), /cleanup failed/);
+			assert.equal(getPatchRefCount(), 0);
+			assert.equal(getPatchCleanup(), failingCleanup);
+		} finally {
+			if (installedCleanup) {
+				setPatchCleanup(installedCleanup);
+				await installedCleanup();
+			}
+			setPatchCleanup(undefined);
+			setPatchInstallPromise(undefined);
+		}
+	});
+});
+
+describe("thinkingStepsExtension failure paths", () => {
+	it("warns on invalid command arguments", async () => {
+		resetExtensionState();
+		const { pi, ctx } = createExtensionHarness();
+		const command = pi.commands.get("thinking-steps");
+		assert.ok(command);
+
+		await command.handler("project unknown-mode", ctx);
+		assert.deepEqual(ctx.ui.notifications.at(-1), {
+			message: "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear]",
+			level: "warning",
+		});
+		assert.equal(pi.appendedEntries.length, 0);
+	});
+
+	it("does not mutate mode when interactive selection is unavailable", async () => {
+		resetExtensionState();
+		const { pi, ctx } = createExtensionHarness([], false);
+		const command = pi.commands.get("thinking-steps");
+		assert.ok(command);
+
+		await command.handler("", ctx);
+		assert.equal(getThinkingStepsMode(), "summary");
+		assert.equal(pi.appendedEntries.length, 0);
+	});
+
+	it("does not mutate mode when interactive selection is cancelled", async () => {
+		resetExtensionState();
+		const { pi, ctx } = createExtensionHarness();
+		const command = pi.commands.get("thinking-steps");
+		assert.ok(command);
+
+		ctx.ui.selectionQueue.push(undefined);
+		await command.handler("", ctx);
+		assert.equal(getThinkingStepsMode(), "summary");
+		assert.equal(pi.appendedEntries.length, 0);
+	});
+
+	it("reports restore persistence failures and falls back to summary mode", async () => {
+		await withPersistenceEnvironment(async ({ cwd }) => {
+			await mkdir(join(cwd, ".pi"), { recursive: true });
+			await writeFile(join(cwd, ".pi", "thinking-steps.json"), "{ not json", "utf8");
+
+			resetExtensionState();
+			const { pi, ctx } = createExtensionHarness([], true, cwd);
+			const sessionStart = getSingleHandler(pi, "session_start");
+			const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+
+			try {
+				await sessionStart({}, ctx);
+				assert.equal(getThinkingStepsMode(), "summary");
+				assert.deepEqual(ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: summary" });
+				assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("Thinking steps persistence error:")));
+			} finally {
+				await sessionShutdown({}, ctx);
+			}
+		});
+	});
+
+	it("reports write failures for scoped defaults without changing session state", async () => {
+		await withPersistenceEnvironment(async ({ cwd }) => {
+			await writeFile(join(cwd, ".pi"), "occupied", "utf8");
+
+			resetExtensionState();
+			const { pi, ctx } = createExtensionHarness([], true, cwd);
+			const command = pi.commands.get("thinking-steps");
+			assert.ok(command);
+
+			await command.handler("project collapsed", ctx);
+
+			assert.equal(getThinkingStepsMode(), "summary");
+			assert.equal(pi.appendedEntries.length, 0);
+			assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("Failed to save thinking view preference")));
+		});
+	});
+
+	it("reports clear failures for scoped defaults without changing session state", async () => {
+		await withPersistenceEnvironment(async ({ cwd }) => {
+			await mkdir(join(cwd, ".pi", "thinking-steps.json"), { recursive: true });
+
+			resetExtensionState();
+			const { pi, ctx } = createExtensionHarness([], true, cwd);
+			const command = pi.commands.get("thinking-steps");
+			assert.ok(command);
+
+			await command.handler("project clear", ctx);
+
+			assert.equal(getThinkingStepsMode(), "summary");
+			assert.equal(pi.appendedEntries.length, 0);
+			assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("Failed to clear thinking view preference")));
+		});
+	});
+
+	it("retains and releases patch references per session lifecycle event", async () => {
+		resetExtensionState();
+		const { pi, ctx } = createExtensionHarness();
+		const sessionStart = getSingleHandler(pi, "session_start");
+		const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+
+		try {
+			assert.equal(getPatchRefCount(), 0);
+			await sessionStart({}, ctx);
+			await sessionStart({}, ctx);
+			assert.equal(getPatchRefCount(), 2);
+
+			await sessionShutdown({}, ctx);
+			assert.equal(getPatchRefCount(), 1);
+
+			await sessionShutdown({}, ctx);
+			assert.equal(getPatchRefCount(), 0);
+		} finally {
+			while (getPatchRefCount() > 0) {
+				await sessionShutdown({}, ctx);
+			}
+			resetExtensionState();
+		}
+	});
+});
+
+describe("integration patch fallback paths", () => {
+	async function createFallbackPatchedComponent(message: unknown) {
+		const release = await retainThinkingStepsPatch();
+		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
+			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void; hideThinkingBlock?: boolean; hiddenThinkingLabel?: string; contentContainer?: unknown } }>(
+				"dist/modes/interactive/components/assistant-message.js",
+			),
+			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				"dist/modes/interactive/theme/theme.js",
+			),
+		]);
+		initTheme("dark", true);
+		const component = new AssistantMessageComponent(message, false);
+		return { component, release };
+	}
+
+	it("falls back to the original renderer when thinking-steps rendering throws", async () => {
+		setThinkingStepsMode("summary");
+		clearActiveThinkingState();
+		const message = {
+			role: "assistant",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			timestamp: 901,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			content: [
+				{ type: "thinking", thinking: "Inspect the current renderer implementation." },
+				{ type: "text", text: "Final answer." },
+			],
+		} as const;
+
+		const { component, release } = await createFallbackPatchedComponent(message);
+		const container = (component as { contentContainer: { addChild(child: unknown): void } }).contentContainer;
+		const originalAddChild = container.addChild.bind(container);
+		container.addChild = ((child: unknown) => {
+			if ((child as { constructor?: { name?: string } }).constructor?.name === "ThinkingStepsComponent") {
+				throw new Error("simulate thinking-steps render failure");
+			}
+			return originalAddChild(child);
+		}) as typeof container.addChild;
+
+		try {
+			component.setHiddenThinkingLabel("fallback-refresh");
+			const lines = component.render(100).map(stripAnsi).join("\n");
+			assert.ok(lines.includes("Inspect the current renderer implementation."));
+			assert.ok(lines.includes("Final answer."));
+			assert.ok(!lines.includes("Thinking Steps ·"));
+		} finally {
+			container.addChild = originalAddChild;
+			await release();
+		}
+	});
+
+	it("preserves original hide semantics when setter fallback is used", async () => {
+		setThinkingStepsMode("summary");
+		clearActiveThinkingState();
+		const message = {
+			role: "assistant",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			timestamp: 902,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			content: [
+				{ type: "thinking", thinking: "Inspect the current renderer implementation." },
+				{ type: "text", text: "Final answer." },
+			],
+		} as const;
+
+		const { component, release } = await createFallbackPatchedComponent(message);
+		const patchedComponent = component as unknown as { updateContent(message: unknown): void } & typeof component;
+		const originalUpdateContent = patchedComponent.updateContent.bind(component);
+		patchedComponent.updateContent = (_message: unknown) => {
+			throw new Error("simulate setter rerender failure");
+		};
+
+		try {
+			component.setHideThinkingBlock(true);
+			component.setHiddenThinkingLabel("fallback");
+			const lines = component.render(100).map(stripAnsi).join("\n");
+			assert.equal((component as { hideThinkingBlock?: boolean }).hideThinkingBlock, true);
+			assert.equal((component as { hiddenThinkingLabel?: string }).hiddenThinkingLabel, "fallback");
+			assert.ok(lines.includes("fallback"));
+			assert.ok(!lines.includes("Thinking Steps ·"));
+		} finally {
+			patchedComponent.updateContent = originalUpdateContent;
+			await release();
+		}
+	});
+});
+
+
+describe("UX regression coverage", () => {
+	const theme = createPlainTheme();
+
+	function assertWidthInvariant(lines: string[], width: number): void {
+		for (const line of lines) {
+			assert.ok(stripAnsi(line).length <= width, `line exceeds width ${width}: ${stripAnsi(line)}`);
+		}
+	}
+
+	it("preserves overlong unbroken collapsed tokens across wrapped lines", () => {
+		const token = "superlongidentifierwithoutbreaks1234567890";
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: `Inspect ${token} carefully.`,
+			},
+		]);
+		const width = 30;
+		const lines = renderThinkingStepsLines(theme, width, {
+			mode: "collapsed",
+			steps,
+			activeStepId: steps[0]?.id,
+			isActive: false,
+			nowMs: 0,
+		});
+
+		assert.ok(lines.length > 1);
+		assertWidthInvariant(lines, width);
+
+		const normalized = stripAnsi(lines.join("")).replace(/Thinking/g, "").replace(/[^A-Za-z0-9]/g, "");
+		assert.ok(normalized.includes(token));
+	});
+
+	it("preserves overlong ANSI-styled collapsed tokens across wrapped lines", () => {
+		const ansiTheme = createAnsiTheme();
+		const token = "styledidentifierwithoutbreaks1234567890";
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "Inspect `" + token + "` carefully.",
+			},
+		]);
+		const width = 30;
+		const lines = renderThinkingStepsLines(ansiTheme, width, {
+			mode: "collapsed",
+			steps,
+			activeStepId: steps[0]?.id,
+			isActive: false,
+			nowMs: 0,
+		});
+
+		assert.ok(lines.length > 1);
+		assertWidthInvariant(lines, width);
+
+		const normalized = stripAnsi(lines.join("")).replace(/Thinking/g, "").replace(/[^A-Za-z0-9]/g, "");
+		assert.ok(normalized.includes(token));
+	});
+
+	it("keeps collapsed, summary, and expanded output within the requested width", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: `1. Inspect parse.ts, render.ts, and test/thinking-steps.test.ts for UX regressions.
+
+Capture concrete evidence for long-token wrapping and list continuation handling.
+
+2. Verify summarizeThinkingText with comma-heavy prose before applying fixes.`,
+			},
+		]);
+		const width = 44;
+		const collapsedLines = renderThinkingStepsLines(theme, width, {
+			mode: "collapsed",
+			steps,
+			activeStepId: steps[0]?.id,
+			isActive: false,
+			nowMs: 0,
+		});
+		const summaryLines = renderThinkingStepsLines(theme, width, {
+			mode: "summary",
+			steps,
+			isActive: false,
+		});
+		const expandedLines = renderThinkingStepsLines(theme, width, {
+			mode: "expanded",
+			steps,
+			isActive: false,
+		});
+
+		assertWidthInvariant(collapsedLines, width);
+		assertWidthInvariant(summaryLines, width);
+		assertWidthInvariant(expandedLines, width);
+	});
+
+	it("keeps multi-paragraph list continuations attached to the originating list item", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "1. Inspect the current renderer implementation.\n\nCapture evidence from narrow-width collapsed output.\n\nDouble-check summary fidelity for comma-heavy prose.\n\n2. Verify the fix with regression tests.",
+			},
+		]);
+
+		assert.equal(steps.length, 2);
+		assert.equal(
+			steps[0]?.body,
+			"1. Inspect the current renderer implementation.\n\nCapture evidence from narrow-width collapsed output.\n\nDouble-check summary fidelity for comma-heavy prose.",
+		);
+		assert.equal(steps[1]?.body, "2. Verify the fix with regression tests.");
+	});
+
+	it("preserves comma-heavy file enumerations without inventing sequential connectors", () => {
+		const summary = summarizeThinkingText(
+			"I need to inspect parse.ts, render.ts, and test/thinking-steps.test.ts before patching.",
+		);
+
+		assert.match(summary, /parse\.ts/i);
+		assert.match(summary, /render\.ts|test\/thinking-steps\.test\.ts/i);
+		assert.doesNotMatch(summary, /, then/i);
+	});
+
+	it("keeps comma-heavy command prose faithful", () => {
+		const summary = summarizeThinkingText(
+			"Compare npm test, npm run build, and node --import tsx test/thinking-steps.test.ts before concluding.",
+		);
+
+		assert.match(summary, /npm test|node --import tsx/i);
+		assert.doesNotMatch(summary, /, then/i);
 	});
 });

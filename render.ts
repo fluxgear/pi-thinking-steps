@@ -113,21 +113,40 @@ function wrapCollapsedSummaryText(theme: ThinkingThemeLike, text: string, firstW
 	const lines: string[] = [];
 	let current = "";
 	let currentWidth = Math.max(8, firstWidth);
+	const continuationLineWidth = () => Math.max(8, continuationWidth);
 
 	for (const word of words) {
-		const candidate = current ? `${current} ${word}` : word;
-		if (visibleWidth(candidate) <= currentWidth) {
-			current = candidate;
-			continue;
-		}
+		let pending = word;
+		while (pending.length > 0) {
+			const candidate = current ? `${current} ${pending}` : pending;
+			if (visibleWidth(candidate) <= currentWidth) {
+				current = candidate;
+				pending = "";
+				continue;
+			}
 
-		if (current) {
-			lines.push(current);
-			currentWidth = Math.max(8, continuationWidth);
-			current = word;
-		} else {
-			lines.push(truncateToWidth(word, currentWidth));
-			currentWidth = Math.max(8, continuationWidth);
+			if (current) {
+				lines.push(current);
+				current = "";
+				currentWidth = continuationLineWidth();
+				continue;
+			}
+
+			const wrappedWord = wrapTextWithAnsi(pending, currentWidth);
+			if (wrappedWord.length === 0) {
+				pending = "";
+				continue;
+			}
+
+			if (wrappedWord.length === 1) {
+				current = wrappedWord[0] ?? "";
+				pending = "";
+				continue;
+			}
+
+			lines.push(...wrappedWord.slice(0, -1));
+			pending = wrappedWord[wrappedWord.length - 1] ?? "";
+			currentWidth = continuationLineWidth();
 		}
 	}
 

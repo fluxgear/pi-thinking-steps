@@ -176,8 +176,12 @@ function reportPersistenceError(ctx: ExtensionContext, error: unknown): void {
 	notifyUser(ctx, `Thinking steps persistence error: ${error instanceof Error ? error.message : String(error)}`, "warning");
 }
 
+function reportPatchError(ctx: ExtensionContext, error: unknown): void {
+	notifyUser(ctx, `Thinking steps patch error: ${error instanceof Error ? error.message : String(error)}`, "warning");
+}
+
 export default function thinkingStepsExtension(pi: ExtensionAPI): void {
-	let releasePatch: (() => Promise<void>) | undefined;
+	const patchReleases: Array<() => Promise<void>> = [];
 
 	pi.registerCommand("thinking-steps", {
 		description: "Switch thinking view: collapsed, summary, or expanded",
@@ -190,7 +194,13 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			}
 
 			if (action.type === "clear") {
-				await clearThinkingStepsModePreference(action.scope, ctx.cwd);
+				try {
+					await clearThinkingStepsModePreference(action.scope, ctx.cwd);
+				} catch (error) {
+					reportPersistenceError(ctx, error);
+					return;
+				}
+
 				refreshThinkingUI(ctx);
 				notifyUser(ctx, `Cleared ${action.scope} thinking view default`, "info");
 				return;
@@ -202,7 +212,12 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			}
 
 			if (action.scope !== "session") {
-				await writeThinkingStepsModePreference(action.scope, ctx.cwd, selectedMode);
+				try {
+					await writeThinkingStepsModePreference(action.scope, ctx.cwd, selectedMode);
+				} catch (error) {
+					reportPersistenceError(ctx, error);
+					return;
+				}
 			}
 
 			applyMode(pi, ctx, selectedMode, { announceScope: action.scope });
@@ -219,7 +234,11 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		clearActiveThinkingState();
-		releasePatch ??= await retainThinkingStepsPatch();
+		try {
+			patchReleases.push(await retainThinkingStepsPatch());
+		} catch (error) {
+			reportPatchError(ctx, error);
+		}
 
 		let restoredMode: ThinkingStepsMode = "summary";
 		try {
@@ -277,9 +296,16 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("thinking-steps", undefined);
 		}
-		if (releasePatch) {
+
+		const releasePatch = patchReleases.pop();
+		if (!releasePatch) {
+			return;
+		}
+
+		try {
 			await releasePatch();
-			releasePatch = undefined;
+		} catch (error) {
+			reportPatchError(ctx, error);
 		}
 	});
 }

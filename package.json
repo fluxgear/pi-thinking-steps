@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-steps",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "type": "module",
   "main": "index.ts",

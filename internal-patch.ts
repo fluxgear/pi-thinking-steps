@@ -136,7 +136,34 @@ async function installPatch(): Promise<() => void> {
 	const originalSetHideThinkingBlock = prototype.setHideThinkingBlock;
 	const originalSetHiddenThinkingLabel = prototype.setHiddenThinkingLabel;
 
-	prototype.updateContent = function patchedUpdateContent(this: AssistantMessageComponentPrototype, message: AssistantMessage): void {
+	const restoreOriginalMethods = (): void => {
+		if (prototype.updateContent !== originalUpdateContent) {
+			prototype.updateContent = originalUpdateContent;
+		}
+		if (prototype.setHideThinkingBlock !== originalSetHideThinkingBlock) {
+			prototype.setHideThinkingBlock = originalSetHideThinkingBlock;
+		}
+		if (prototype.setHiddenThinkingLabel !== originalSetHiddenThinkingLabel) {
+			prototype.setHiddenThinkingLabel = originalSetHiddenThinkingLabel;
+		}
+	};
+
+	const fallbackToOriginalSetHideThinkingBlock = (instance: AssistantMessageComponentPrototype, hide: boolean): void => {
+		instance.hideThinkingBlock = hide;
+		if (!instance.lastMessage) return;
+		fallbackToOriginalUpdateContent(instance, instance.lastMessage, originalUpdateContent);
+	};
+
+	const fallbackToOriginalSetHiddenThinkingLabel = (
+		instance: AssistantMessageComponentPrototype,
+		label: string,
+	): void => {
+		instance.hiddenThinkingLabel = label;
+		if (!instance.lastMessage) return;
+		fallbackToOriginalUpdateContent(instance, instance.lastMessage, originalUpdateContent);
+	};
+
+	const patchedUpdateContent = function patchedUpdateContent(this: AssistantMessageComponentPrototype, message: AssistantMessage): void {
 		this.lastMessage = message;
 		if (!hasPatchableContentContainer(this)) {
 			fallbackToOriginalUpdateContent(this, message, originalUpdateContent);
@@ -194,33 +221,57 @@ async function installPatch(): Promise<() => void> {
 		}
 	};
 
-	prototype.setHideThinkingBlock = function patchedSetHideThinkingBlock(this: AssistantMessageComponentPrototype, _hide: boolean): void {
+	const patchedSetHideThinkingBlock = function patchedSetHideThinkingBlock(this: AssistantMessageComponentPrototype, hide: boolean): void {
+		if (!hasPatchableContentContainer(this)) {
+			fallbackToOriginalSetHideThinkingBlock(this, hide);
+			return;
+		}
+
 		this.hideThinkingBlock = false;
 		if (!this.lastMessage) return;
 		try {
 			this.updateContent(this.lastMessage);
 		} catch {
-			fallbackToOriginalUpdateContent(this, this.lastMessage, originalUpdateContent);
+			fallbackToOriginalSetHideThinkingBlock(this, hide);
 		}
 	};
 
-	prototype.setHiddenThinkingLabel = function patchedSetHiddenThinkingLabel(
+	const patchedSetHiddenThinkingLabel = function patchedSetHiddenThinkingLabel(
 		this: AssistantMessageComponentPrototype,
 		label: string,
 	): void {
+		if (!hasPatchableContentContainer(this)) {
+			fallbackToOriginalSetHiddenThinkingLabel(this, label);
+			return;
+		}
+
 		this.hiddenThinkingLabel = label;
 		if (!this.lastMessage) return;
 		try {
 			this.updateContent(this.lastMessage);
 		} catch {
-			fallbackToOriginalUpdateContent(this, this.lastMessage, originalUpdateContent);
+			fallbackToOriginalSetHiddenThinkingLabel(this, label);
 		}
 	};
 
+	try {
+		prototype.updateContent = patchedUpdateContent;
+		prototype.setHideThinkingBlock = patchedSetHideThinkingBlock;
+		prototype.setHiddenThinkingLabel = patchedSetHiddenThinkingLabel;
+	} catch (error) {
+		try {
+			restoreOriginalMethods();
+		} catch (rollbackError) {
+			throw new Error("Thinking Steps patch failed: AssistantMessageComponent prototype patching failed and rollback was incomplete.", {
+				cause: { installError: error, rollbackError },
+			});
+		}
+
+		throw new Error("Thinking Steps patch failed: AssistantMessageComponent prototype is incompatible with thinking-steps patching.", { cause: error });
+	}
+
 	return () => {
-		prototype.updateContent = originalUpdateContent;
-		prototype.setHideThinkingBlock = originalSetHideThinkingBlock;
-		prototype.setHiddenThinkingLabel = originalSetHiddenThinkingLabel;
+		restoreOriginalMethods();
 	};
 }
 
@@ -249,11 +300,20 @@ export async function retainThinkingStepsPatch(): Promise<() => Promise<void>> {
 		}
 	}
 
+	let released = false;
 	return async () => {
+		if (released) return;
+		released = true;
+
 		const refCount = decrementPatchRefCount();
 		if (refCount > 0) return;
+
 		const currentCleanup = getPatchCleanup();
-		setPatchCleanup(undefined);
-		await currentCleanup?.();
+		if (!currentCleanup) return;
+
+		await currentCleanup();
+		if (getPatchCleanup() === currentCleanup) {
+			setPatchCleanup(undefined);
+		}
 	};
 }
