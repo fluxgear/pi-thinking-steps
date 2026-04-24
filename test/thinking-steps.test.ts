@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { deriveThinkingSteps, iconForThinkingRole, inferThinkingRole, parseThinkingMode, summarizeThinkingText } from "../parse.js";
-import { assertPatchableAssistantMessageComponent, assertThinkingStepsTheme, retainThinkingStepsPatch } from "../internal-patch.js";
+import {
+	assertPatchableAssistantMessageComponent,
+	assertThinkingStepsTheme,
+	importPiCodingAgentInternal,
+	PI_CODING_AGENT_INTERNAL_MODULES,
+	resolvePiCodingAgentInternalModuleUrl,
+	retainThinkingStepsPatch,
+} from "../internal-patch.js";
 import { ThinkingStepsComponent, renderThinkingStepsLines } from "../render.js";
 import {
 	clearActiveThinkingState,
@@ -41,18 +47,6 @@ function createAnsiTheme(): ThinkingThemeLike {
 		fg: (color, text) => `[${color === "accent" ? "36" : "37"}m${text}[39m`,
 		bold: (text) => `[1m${text}[22m`,
 	};
-}
-
-function getPackageRoot(packageName: string): string {
-	const entryUrl = import.meta.resolve(packageName);
-	const entryPath = fileURLToPath(entryUrl);
-	return dirname(dirname(entryPath));
-}
-
-async function importPiInternal<TModule>(relativePath: string): Promise<TModule> {
-	const packageRoot = getPackageRoot("@mariozechner/pi-coding-agent");
-	const moduleUrl = pathToFileURL(join(packageRoot, relativePath)).href;
-	return (await import(moduleUrl)) as TModule;
 }
 
 type FakeSessionEntry = { type?: string; customType?: string; data?: { mode?: string } };
@@ -292,6 +286,28 @@ describe("patch guards", () => {
 			/interactive theme export is incompatible/,
 		);
 	});
+
+	it("exports the pinned Pi internal module paths used by the patch", () => {
+		assert.equal(
+			PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
+			"dist/modes/interactive/components/assistant-message.js",
+		);
+		assert.equal(
+			PI_CODING_AGENT_INTERNAL_MODULES.theme,
+			"dist/modes/interactive/theme/theme.js",
+		);
+		assert.match(
+			resolvePiCodingAgentInternalModuleUrl(PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent),
+			/assistant-message\.js$/,
+		);
+	});
+
+	it("reports a specific compatibility error when an internal module cannot be imported", async () => {
+		await assert.rejects(
+			() => importPiCodingAgentInternal("dist/modes/interactive/missing.js"),
+			/could not import internal module "@mariozechner\/pi-coding-agent\/dist\/modes\/interactive\/missing\.js"/,
+		);
+	});
 });
 
 
@@ -414,6 +430,23 @@ describe("summarizeThinkingText", () => {
 		);
 		assert.ok(summary.includes("TS2322"));
 		assert.ok(/Retry|retry/.test(summary));
+	});
+
+	it("handles provider-shaped reasoning deltas with semantic assertions", () => {
+		const summary = summarizeThinkingText(
+			"The failure happens before any renderer logic runs, so the first thing to verify is whether AssistantMessageComponent still exists at the expected internal path. If that import still resolves, I should compare the theme export shape next and rerun npm test. I should not assume the path moved until I verify it.",
+		);
+		assert.match(summary, /failure happens before any renderer logic runs|AssistantMessageComponent|theme export shape|rerun npm test/i);
+		assert.doesNotMatch(summary, /path moved/i);
+		assert.ok(summary.length <= 84);
+	});
+
+	it("does not overstate breakage in provider-shaped reasoning", () => {
+		const summary = summarizeThinkingText(
+			"It looks like the compatibility failure may be coming from the internal module import rather than the renderer code itself. I need to check the pinned Pi package layout first, then confirm whether the theme module moved before I call it a breaking drift.",
+		);
+		assert.match(summary, /check the pinned Pi package layout|confirm whether the theme module moved/i);
+		assert.doesNotMatch(summary, /breaking drift|theme module moved\./i);
 	});
 
 	it("returns deterministic output for identical input", () => {
@@ -584,6 +617,65 @@ describe("renderThinkingStepsLines", () => {
 		assert.ok(!joined.includes("`"));
 	});
 
+	it("renders provider-hidden reasoning across collapsed, summary, and expanded modes", () => {
+		const redactedSteps = deriveThinkingSteps([{ contentIndex: 0, text: "", redacted: true }]);
+		const collapsed = stripAnsi(renderThinkingStepsLines(theme, 100, {
+			mode: "collapsed",
+			steps: redactedSteps,
+			activeStepId: redactedSteps[0]?.id,
+			isActive: false,
+			nowMs: 0,
+		}).join("\n"));
+		const summary = stripAnsi(renderThinkingStepsLines(theme, 100, {
+			mode: "summary",
+			steps: redactedSteps,
+			isActive: false,
+		}).join("\n"));
+		const expanded = stripAnsi(renderThinkingStepsLines(theme, 100, {
+			mode: "expanded",
+			steps: redactedSteps,
+			isActive: false,
+		}).join("\n"));
+
+		assert.match(collapsed, /Reasoning is hidden by the provider\./);
+		assert.match(summary, /Reasoning is hidden by the provider\./);
+		assert.match(expanded, /Reasoning is hidden by the provider\./);
+		assert.doesNotMatch(`${collapsed}\n${summary}\n${expanded}`, /undefined/);
+	});
+
+	it("wraps long summary and expanded headers instead of truncating them", () => {
+		const [baseStep] = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "Inspect the current renderer implementation.",
+			},
+		]);
+		assert.ok(baseStep);
+		const longHeaderSteps = [{
+			...baseStep,
+			summary: "Inspect the current renderer implementation and verify the refresh path after mode changes carefully.",
+			body: "Body.",
+		}];
+		const summaryLines = renderThinkingStepsLines(theme, 44, {
+			mode: "summary",
+			steps: longHeaderSteps,
+			isActive: false,
+		});
+		const expandedLines = renderThinkingStepsLines(theme, 44, {
+			mode: "expanded",
+			steps: longHeaderSteps,
+			isActive: false,
+		});
+		const summaryJoined = stripAnsi(summaryLines.join("\n"));
+		const expandedJoined = stripAnsi(expandedLines.join("\n"));
+		assert.ok(summaryLines.length > 2);
+		assert.ok(expandedLines.length > 3);
+		assert.match(summaryJoined, /refresh\s+path after mode changes carefully/i);
+		assert.match(expandedJoined, /refresh\s+path after mode changes carefully/i);
+		assert.ok(!summaryJoined.includes("…"));
+		assert.ok(!expandedJoined.includes("…"));
+	});
+
 	it("collapsed active rendering animates without using italics", () => {
 		const first = renderThinkingStepsLines(theme, 120, {
 			mode: "collapsed",
@@ -612,11 +704,11 @@ describe("integration patch", () => {
 		const release = await retainThinkingStepsPatch();
 		try {
 			const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-				importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void } }>(
-					"dist/modes/interactive/components/assistant-message.js",
+				importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void } }>(
+					PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
 				),
-				importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-					"dist/modes/interactive/theme/theme.js",
+				importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+					PI_CODING_AGENT_INTERNAL_MODULES.theme,
 				),
 			]);
 			initTheme("dark", true);
@@ -687,7 +779,7 @@ describe("thinkingStepsExtension", () => {
 
 		const command = pi.commands.get("thinking-steps");
 		assert.ok(command);
-		assert.equal(command.description, "Switch thinking view: collapsed, summary, or expanded");
+		assert.equal(command.description, "Switch thinking view or set/clear project/global defaults");
 		assert.deepEqual(command.getArgumentCompletions?.("s"), [{ value: "summary", label: "summary" }]);
 		assert.equal(command.getArgumentCompletions?.("z") ?? null, null);
 
@@ -757,11 +849,11 @@ describe("thinkingStepsExtension", () => {
 		assert.ok(shortcut);
 
 		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void } }>(
-				"dist/modes/interactive/components/assistant-message.js",
+			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void } }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
 			),
-			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				"dist/modes/interactive/theme/theme.js",
+			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.theme,
 			),
 		]);
 		initTheme("dark", true);
@@ -1043,11 +1135,11 @@ describe("thinkingStepsExtension persistence", () => {
 });
 	async function loadAssistantMessageComponent() {
 		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(
-				"dist/modes/interactive/components/assistant-message.js",
+			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
 			),
-			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				"dist/modes/interactive/theme/theme.js",
+			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.theme,
 			),
 		]);
 		initTheme("dark", true);
@@ -1130,11 +1222,11 @@ describe("integration patch edge cases", () => {
 	async function createPatchedComponent(message: unknown) {
 		const release = await retainThinkingStepsPatch();
 		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void; hideThinkingBlock?: boolean } }>(
-				"dist/modes/interactive/components/assistant-message.js",
+			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void; hideThinkingBlock?: boolean } }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
 			),
-			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				"dist/modes/interactive/theme/theme.js",
+			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.theme,
 			),
 		]);
 		initTheme("dark", true);
@@ -1298,6 +1390,40 @@ describe("integration patch edge cases", () => {
 			const lines = component.render(100).map(stripAnsi).join("\n");
 			assert.ok(lines.includes("Operation aborted"));
 			assert.ok(!lines.includes("Request was aborted"));
+		} finally {
+			await release();
+		}
+	});
+
+	it("renders provider-hidden reasoning through the patched component path", async () => {
+		setThinkingStepsMode("summary");
+		clearActiveThinkingState();
+		const message = {
+			role: "assistant",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			timestamp: 204.5,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			content: [
+				{ type: "thinking", thinking: "", redacted: true },
+				{ type: "text", text: "Final answer." },
+			],
+		} as const;
+
+		const { component, release } = await createPatchedComponent(message);
+		try {
+			const lines = component.render(100).map(stripAnsi).join("\n");
+			assert.ok(lines.includes("Reasoning is hidden by the provider."));
+			assert.ok(lines.includes("Final answer."));
 		} finally {
 			await release();
 		}
@@ -1499,11 +1625,11 @@ describe("state ownership", () => {
 describe("patch lifecycle regression coverage", () => {
 	async function loadAssistantMessageComponentForPatchLifecycle() {
 		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(
-				"dist/modes/interactive/components/assistant-message.js",
+			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
 			),
-			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				"dist/modes/interactive/theme/theme.js",
+			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.theme,
 			),
 		]);
 		initTheme("dark", true);
@@ -1543,7 +1669,7 @@ describe("patch lifecycle regression coverage", () => {
 		}
 	});
 
-	it("retains the cleanup handle when final release cleanup throws", async () => {
+	it("restores the cleanup handle if final release cleanup throws", async () => {
 		const release = await retainThinkingStepsPatch();
 		const installedCleanup = getPatchCleanup();
 		assert.ok(installedCleanup);
@@ -1713,11 +1839,11 @@ describe("integration patch fallback paths", () => {
 	async function createFallbackPatchedComponent(message: unknown) {
 		const release = await retainThinkingStepsPatch();
 		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void; hideThinkingBlock?: boolean; hiddenThinkingLabel?: string; contentContainer?: unknown } }>(
-				"dist/modes/interactive/components/assistant-message.js",
+			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void; hideThinkingBlock?: boolean; hiddenThinkingLabel?: string; contentContainer?: unknown } }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
 			),
-			importPiInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				"dist/modes/interactive/theme/theme.js",
+			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.theme,
 			),
 		]);
 		initTheme("dark", true);
@@ -1995,24 +2121,162 @@ describe("scope-aware runtime state", () => {
 		assert.ok(!collapsedLines.includes("Thinking Steps · Expanded"));
 		assert.ok(expandedLines.includes("Thinking Steps · Expanded"));
 	});
+
+	it("thinkingStepsExtension scopes duplicate message timestamps per extension instance", async () => {
+	const scopeA = "/tmp/pi-thinking-steps-scope-a";
+	const scopeB = "/tmp/pi-thinking-steps-scope-b";
+	resetExtensionState(scopeA);
+
+	const { pi: piA, ctx: ctxA } = createExtensionHarness([], true, scopeA);
+	const { pi: piB, ctx: ctxB } = createExtensionHarness([], true, scopeB);
+
+	const sessionStartA = getSingleHandler(piA, "session_start");
+	const sessionStartB = getSingleHandler(piB, "session_start");
+	const messageUpdateA = getSingleHandler(piA, "message_update");
+	const messageUpdateB = getSingleHandler(piB, "message_update");
+
+	await sessionStartA({}, ctxA);
+	await sessionStartB({}, ctxB);
+	setThinkingStepsMode("collapsed", scopeA);
+	setThinkingStepsMode("collapsed", scopeB);
+
+	await messageUpdateA({
+		message: { role: "assistant", timestamp: 7 },
+		assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+	});
+	await messageUpdateB({
+		message: { role: "assistant", timestamp: 7 },
+		assistantMessageEvent: { type: "thinking_start", contentIndex: 1 },
+	});
+
+	setCurrentThinkingScopeKey(scopeA);
+	const componentA = new ThinkingStepsComponent(createPlainTheme(), 7, [
+		{ contentIndex: 0, text: "Inspect alpha" },
+		{ contentIndex: 1, text: "Verify alpha" },
+	]);
+	setCurrentThinkingScopeKey(scopeB);
+	const componentB = new ThinkingStepsComponent(createPlainTheme(), 7, [
+		{ contentIndex: 0, text: "Inspect beta" },
+		{ contentIndex: 1, text: "Verify beta" },
+	]);
+
+	const renderedA = stripAnsi(componentA.render(80).join("\n"));
+	const renderedB = stripAnsi(componentB.render(80).join("\n"));
+
+	assert.match(renderedA, /Inspect alpha/);
+	assert.doesNotMatch(renderedA, /Verify alpha/);
+	assert.match(renderedB, /Verify beta/);
+});
+
+	it("thinkingStepsExtension clears active thinking within the owning scope only", async () => {
+	const scopeA = "/tmp/pi-thinking-steps-scope-a";
+	const scopeB = "/tmp/pi-thinking-steps-scope-b";
+	resetExtensionState(scopeA);
+
+	const { pi: piA, ctx: ctxA } = createExtensionHarness([], true, scopeA);
+	const { pi: piB, ctx: ctxB } = createExtensionHarness([], true, scopeB);
+
+	const sessionStartA = getSingleHandler(piA, "session_start");
+	const sessionStartB = getSingleHandler(piB, "session_start");
+	const messageUpdateA = getSingleHandler(piA, "message_update");
+	const messageUpdateB = getSingleHandler(piB, "message_update");
+	const messageEndA = getSingleHandler(piA, "message_end");
+
+	await sessionStartA({}, ctxA);
+	await sessionStartB({}, ctxB);
+	setThinkingStepsMode("collapsed", scopeA);
+	setThinkingStepsMode("collapsed", scopeB);
+
+	await messageUpdateA({
+		message: { role: "assistant", timestamp: 11 },
+		assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+	});
+	await messageUpdateB({
+		message: { role: "assistant", timestamp: 11 },
+		assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+	});
+	await messageEndA({
+		message: { role: "assistant", timestamp: 11 },
+	});
+
+	setCurrentThinkingScopeKey(scopeA);
+	const componentA = new ThinkingStepsComponent(createPlainTheme(), 11, [
+		{ contentIndex: 0, text: "Inspect alpha" },
+		{ contentIndex: 1, text: "Verify alpha" },
+	]);
+	setCurrentThinkingScopeKey(scopeB);
+	const componentB = new ThinkingStepsComponent(createPlainTheme(), 11, [
+		{ contentIndex: 0, text: "Inspect beta" },
+		{ contentIndex: 1, text: "Verify beta" },
+	]);
+
+	const renderedA = stripAnsi(componentA.render(80).join("\n"));
+	const renderedB = stripAnsi(componentB.render(80).join("\n"));
+
+	assert.match(renderedA, /Verify alpha/);
+	assert.match(renderedB, /Inspect beta/);
+	assert.doesNotMatch(renderedB, /Verify beta/);
+});
+});
+
+describe("Batch 2 regressions", () => {
+	it("splits a standalone concluding paragraph after list items into its own step", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "1. Inspect parse.ts.\n\n2. Update render.ts.\n\nThat should confirm the fix.",
+			},
+		]);
+
+		assert.equal(steps.length, 3);
+		assert.equal(steps[0]?.body, "1. Inspect parse.ts.");
+		assert.equal(steps[1]?.body, "2. Update render.ts.");
+		assert.equal(steps[2]?.body, "That should confirm the fix.");
+	});
+
+	it("preserves ordered list markers in expanded rendering", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "1. Inspect `render.ts`.\n\n2. Verify that refreshes can be triggered safely.",
+			},
+		]);
+		const lines = renderThinkingStepsLines(createPlainTheme(), 100, {
+			mode: "expanded",
+			steps,
+			isActive: false,
+		});
+		const joined = stripAnsi(lines.join("\n"));
+
+		assert.match(joined, /1\. Inspect render\.ts\./);
+		assert.match(joined, /2\. Verify that refreshes can be triggered safely\./);
+		assert.doesNotMatch(joined, /• Inspect render\.ts\./);
+		assert.doesNotMatch(joined, /• Verify that refreshes can be triggered safely\./);
+	});
 });
 
 describe("repo metadata contracts", () => {
 	it("keeps published files, pinned Pi dependencies, and docs aligned", async () => {
 		const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
 			files: string[];
+			license: string;
 			devDependencies: Record<string, string>;
 		};
 		for (const file of packageJson.files) {
 			await assert.doesNotReject(readFile(file, "utf8"));
 		}
+		assert.equal(packageJson.license, "MIT");
 		assert.equal(packageJson.devDependencies["@mariozechner/pi-ai"], "0.69.0");
 		assert.equal(packageJson.devDependencies["@mariozechner/pi-coding-agent"], "0.69.0");
 		assert.equal(packageJson.devDependencies["@mariozechner/pi-tui"], "0.69.0");
 		assert.ok(!Object.values(packageJson.devDependencies).includes("latest"));
 
+		const license = await readFile("LICENSE", "utf8");
+		assert.match(license, /^MIT License/m);
+
 		const readme = await readFile("README.md", "utf8");
-		assert.doesNotMatch(readme, /\[\`LICENSE\`\]\(\.\/LICENSE\)/);
+		assert.match(readme, /\[MIT License\]\(\.\/LICENSE\)/);
+		assert.match(readme, /badge\/license-MIT/i);
 
 		const agents = await readFile("AGENTS.md", "utf8");
 		assert.match(agents, /project clear/);

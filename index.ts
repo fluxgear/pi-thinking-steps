@@ -195,8 +195,15 @@ function reportPatchError(ctx: ExtensionContext, error: unknown): void {
 }
 
 export default function thinkingStepsExtension(pi: ExtensionAPI): void {
+	let sessionScopeKey = getCurrentThinkingScopeKey();
+	const setSessionScopeKey = (scopeKey: string): string => {
+		sessionScopeKey = scopeKey;
+		setCurrentThinkingScopeKey(scopeKey);
+		return sessionScopeKey;
+	};
+
 	pi.registerCommand("thinking-steps", {
-		description: "Switch thinking view: collapsed, summary, or expanded",
+		description: "Switch thinking view or set/clear project/global defaults", 
 		getArgumentCompletions: thinkingModeCompletions,
 		handler: async (args, ctx) => {
 			const action = parseCommandAction(args);
@@ -245,10 +252,10 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		setCurrentThinkingScopeKey(ctx.cwd);
-		clearActiveThinkingState(undefined, ctx.cwd);
+		const activeScopeKey = setSessionScopeKey(ctx.cwd);
+		clearActiveThinkingState(undefined, activeScopeKey);
 		try {
-			registerThinkingPatchRelease(ctx.cwd, await retainThinkingStepsPatch());
+			registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch());
 		} catch (error) {
 			reportPatchError(ctx, error);
 		}
@@ -262,7 +269,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			const timestamp = typeof (event.message as { timestamp?: unknown }).timestamp === "number"
 				? (event.message as { timestamp: number }).timestamp
 				: undefined;
-			clearActiveThinkingState(timestamp, timestamp === undefined ? getCurrentThinkingScopeKey() : undefined);
+			clearActiveThinkingState(timestamp, sessionScopeKey);
 		}
 	});
 
@@ -274,7 +281,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 				active: true,
 				messageTimestamp: event.message.timestamp,
 				contentIndex: assistantEvent.contentIndex,
-			}, getCurrentThinkingScopeKey());
+			}, sessionScopeKey);
 			return;
 		}
 
@@ -287,7 +294,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			assistantEvent.type === "toolcall_delta" ||
 			assistantEvent.type === "toolcall_end"
 		) {
-			clearActiveThinkingState(event.message.timestamp);
+			clearActiveThinkingState(event.message.timestamp, sessionScopeKey);
 		}
 	});
 
@@ -296,22 +303,22 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			const timestamp = typeof (event.message as { timestamp?: unknown }).timestamp === "number"
 				? (event.message as { timestamp: number }).timestamp
 				: undefined;
-			clearActiveThinkingState(timestamp, timestamp === undefined ? getCurrentThinkingScopeKey() : undefined);
+			clearActiveThinkingState(timestamp, sessionScopeKey);
 		}
 	});
 
 	pi.on("agent_end", async () => {
-		clearActiveThinkingState(undefined, getCurrentThinkingScopeKey());
+		clearActiveThinkingState(undefined, sessionScopeKey);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		setCurrentThinkingScopeKey(ctx.cwd);
-		clearActiveThinkingState(undefined, ctx.cwd);
+		const activeScopeKey = setSessionScopeKey(ctx.cwd);
+		clearActiveThinkingState(undefined, activeScopeKey);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("thinking-steps", undefined);
 		}
 
-		const releasePatch = takeThinkingPatchRelease(ctx.cwd);
+		const releasePatch = takeThinkingPatchRelease(activeScopeKey);
 		if (!releasePatch) {
 			return;
 		}

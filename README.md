@@ -1,12 +1,12 @@
 # Pi Thinking Steps
 
 <p align="center">
-  <strong>A polished, terminal-native thinking view for Pi.</strong><br />
-  Turn raw provider reasoning into something you can actually scan while it streams.
+  <strong>A clean, terminal-native thinking view for Pi.</strong><br />
+  Make provider reasoning easier to follow without changing what it says.
 </p>
 
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/tags"><img alt="version" src="https://img.shields.io/badge/version-0.9.9-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/tags"><img alt="version" src="https://img.shields.io/badge/version-1.0.0-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-Strict-3178c6" />
   <img alt="terminal" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -14,67 +14,49 @@
 
 ---
 
-## Why this exists
+## Overview
 
-Pi already exposes provider thinking, but the default presentation is intentionally minimal. That is fine for occasional inspection, but weak when you want to:
+Pi already exposes provider thinking. Pi Thinking Steps turns that raw stream into something more readable, more structured, and easier to scan in a real terminal.
 
-- understand what the model is doing right now
-- scan a long reasoning trace without losing the thread
-- review steps quickly before trusting an answer
-- see headings, lists, code spans, and emphasis rendered more cleanly
-- keep the UI compact until you need the full detail
+It stays intentionally conservative:
 
-**Pi Thinking Steps** improves readability **without changing the meaning of the source text**.
+- no invented reasoning
+- no synthetic structure that changes meaning
+- no web-style decoration
+- no break from Pi's terminal workflow
+
+The result is simple: clearer thinking output, with the original intent preserved.
 
 ---
 
-## At a glance
+## What you get
 
-- **Three stable modes** — `collapsed`, `summary`, `expanded`
-- **Live terminal UI** — compact while thinking is streaming, detailed when you need it
-- **Faithful parsing** — no invented reasoning, no synthetic meaning
-- **Markdown-aware rendering** — headings, lists, code spans, emphasis markers
+- **Three focused modes** — `collapsed`, `summary`, `expanded`
+- **Terminal-first rendering** — built for width constraints, ANSI safety, and live output
+- **Faithful parsing** — deterministic step derivation and restrained summarization
+- **Markdown-aware display** — headings, bullets, ordered lists, code spans, emphasis
 - **Scoped persistence** — session, project, and global defaults
 - **Patch safety** — isolated, reversible, reference-counted runtime patching
 - **Regression coverage** — parser, renderer, lifecycle, and compatibility tests
 
 ---
 
-## How it works
+## The three modes
 
-```mermaid
-flowchart LR
-    A[Raw provider thinking] --> B[Deterministic step derivation]
-    B --> C[Role + summary inference]
-    C --> D[Terminal-native renderer]
-    D --> E1[Collapsed]
-    D --> E2[Summary]
-    D --> E3[Expanded]
-```
-
-The extension keeps the pipeline narrow on purpose:
-- parse the provider text into faithful step boundaries
-- summarize those steps conservatively
-- render them in a terminal-first format that stays readable under real width constraints
-
----
-
-## Display modes
+| Mode | Purpose |
+|---|---|
+| `collapsed` | One compact live line for the active step |
+| `summary` | One summarized line per derived step |
+| `expanded` | Full step detail with structured terminal flow |
 
 ### `collapsed`
-Shows a single compact line for the active thinking step.
-
-Best when you want minimal visual noise while still seeing what the model is actively working on.
+Use it when you want minimal visual noise while the model is still thinking.
 
 ### `summary`
-Shows one summarized line per derived thinking step.
-
-Best when you want a fast overview of the reasoning flow.
+Use it when you want the reasoning flow at a glance.
 
 ### `expanded`
-Shows the full derived steps with body text and connected terminal flow styling.
-
-Best when you want the complete reasoning text, but rendered more cleanly than raw transcript output.
+Use it when you want the full text, but in a cleaner terminal presentation than the raw transcript.
 
 ---
 
@@ -84,39 +66,30 @@ Best when you want the complete reasoning text, but rendered more cleanly than r
 |---|---|
 | Cycle thinking view | `Alt+T` |
 | Choose a mode interactively | `/thinking-steps` |
-| Set collapsed mode for this session | `/thinking-steps collapsed` |
-| Set summary mode for this session | `/thinking-steps summary` |
-| Set expanded mode for this session | `/thinking-steps expanded` |
-| Save a project default | `/thinking-steps project expanded` |
-| Save a global default | `/thinking-steps global summary` |
+| Set session mode | `/thinking-steps collapsed` / `summary` / `expanded` |
+| Save a project default | `/thinking-steps project <mode>` |
+| Save a global default | `/thinking-steps global <mode>` |
 | Clear a project default | `/thinking-steps project clear` |
 | Clear a global default | `/thinking-steps global clear` |
 
 ---
 
-## Persistence model
+## Persistence
 
-Thinking Steps restores the active mode in this order:
+Mode restoration follows this order:
 
-1. last mode saved in the current session
+1. session history
 2. project default from `.pi/thinking-steps.json`
 3. global default from `~/.pi/agent/state/thinking-steps.json`
 4. built-in default `summary`
 
-```mermaid
-flowchart TD
-    S[Session history] -->|missing| P[Project default]
-    P -->|missing| G[Global default]
-    G -->|missing| D[Built-in summary default]
-```
-
-Use `/thinking-steps <mode>` when the choice should stay local to the current session. Use `project` or `global` when you want future sessions to inherit the same default automatically.
+Use plain `/thinking-steps <mode>` when the choice should stay local to the current session. Use `project` or `global` when you want future sessions to inherit that choice automatically.
 
 ---
 
 ## Example output
 
-### Summary mode
+### Summary
 
 ```text
 ┆ Thinking Steps · Summary
@@ -125,7 +98,7 @@ Use `/thinking-steps <mode>` when the choice should stay local to the current se
 └─ ✓ Verify the refresh path after mode changes.
 ```
 
-### Expanded mode
+### Expanded
 
 ```text
 ┆ Thinking Steps · Expanded
@@ -137,7 +110,7 @@ Use `/thinking-steps <mode>` when the choice should stay local to the current se
    Verify the refresh path after mode changes.
 ```
 
-### Collapsed mode
+### Collapsed
 
 ```text
 │ Thinking ✓ Verify the refresh path after mode changes. ·
@@ -147,17 +120,18 @@ Use `/thinking-steps <mode>` when the choice should stay local to the current se
 
 ## Rendering behavior
 
-Pi Thinking Steps is intentionally conservative: it improves readability **without inventing new meaning**.
+Pi Thinking Steps is designed to improve readability without changing meaning.
 
 ### Parsing and step derivation
 
-It derives steps from provider thinking text using deterministic rules so output stays faithful to the original text.
+The parser uses deterministic rules to keep step boundaries believable and stable.
 
 Examples:
 
 - standalone markdown headings stay attached to the body they introduce
-- list items become separate steps when that improves scanability
+- list items split into separate steps when that improves scanability
 - blank-line continuation paragraphs stay attached to the correct list item
+- standalone concluding prose after a list stays separate from the final list item
 - redacted reasoning remains clearly marked as provider-hidden
 
 ### Display formatting
@@ -165,19 +139,22 @@ Examples:
 The renderer normalizes markdown-like content for terminal display:
 
 - headings render as headings instead of raw `#` clutter
-- list items render with clean bullets
+- unordered list items render with clean bullets
+- ordered and lettered list markers are preserved
 - backticks render as code-styled inline text
 - emphasis markers render cleanly instead of leaking raw `*...*` / `_..._`
 - raw control sequences from model output are stripped before rendering
 
 ### Terminal-first constraints
 
-This extension is built for a real terminal, not a web UI. That means:
+This extension is built for a real terminal, not a browser UI.
 
-- width-aware line wrapping matters
+That means:
+
+- width-aware wrapping matters
 - ANSI-safe rendering matters
 - over-decoration is avoided
-- the output should remain useful in narrower layouts
+- output should stay readable in narrower layouts
 
 ---
 
@@ -185,27 +162,35 @@ This extension is built for a real terminal, not a web UI. That means:
 
 Pi currently exposes only a minimal public hook for built-in thinking rendering: `setHiddenThinkingLabel`.
 
-Because of that limitation, this extension patches Pi's internal `AssistantMessageComponent` at runtime and replaces the default visible thinking rendering path with a custom structured renderer.
+Because of that limitation, Pi Thinking Steps patches Pi's internal `AssistantMessageComponent` at runtime and replaces the default visible thinking rendering path with a custom renderer.
 
-That patch layer is designed to be:
+That patch layer is:
 
-- **isolated** — runtime patching lives in `internal-patch.ts`
+- **isolated** — patching lives in `internal-patch.ts`
 - **reversible** — cleanup restores original methods
 - **reference-counted** — multiple retain/release paths are handled safely
 - **guarded** — compatibility checks fail loudly when Pi internals drift
-- **tested** — integration and regression tests cover patch lifecycle and rendering edge cases
+- **tested** — integration and regression coverage protects the patch lifecycle
 
-```mermaid
-flowchart LR
-    I[index.ts] --> S[state.ts]
-    I --> P[parse.ts]
-    I --> R[render.ts]
-    I --> X[internal-patch.ts]
-    I --> F[persistence.ts]
-    X --> R
-    R --> S
-    P --> R
-```
+---
+
+## Compatibility
+
+This extension intentionally depends on Pi's current internal TUI implementation.
+
+Today, the patch relies on these internal modules in `@mariozechner/pi-coding-agent`:
+
+- `dist/modes/interactive/components/assistant-message.js`
+- `dist/modes/interactive/theme/theme.js`
+
+That means:
+
+- upstream Pi internal changes can break the patch layer
+- Pi upgrades should be treated as deliberate compatibility work
+- the pinned Pi package versions and `package-lock.json` matter
+- `npm test` is part of the maintenance contract, not an optional extra
+
+If Pi changes its internal renderer shape, this extension may need updates even if the public CLI still works normally.
 
 ---
 
@@ -217,8 +202,6 @@ From the repository root:
 pi -e ./index.ts
 ```
 
-You can also load this repository as a Pi extension package through your normal Pi setup.
-
 The package entry point is already configured in `package.json`:
 
 ```json
@@ -226,21 +209,6 @@ The package entry point is already configured in `package.json`:
   "extensions": ["./index.ts"]
 }
 ```
-
----
-
-## Compatibility note
-
-This project intentionally depends on Pi's current internal TUI implementation.
-
-That means:
-
-- upstream Pi internal changes can break the patch layer
-- keeping this extension in sync with Pi releases matters
-- Pi package upgrades should be deliberate compatibility changes: update the pinned versions, refresh `package-lock.json`, and rerun `npm test`
-- the test suite is part of the maintenance contract, not an optional extra
-
-If Pi changes its internal renderer shape, this extension may need updates even if the public Pi CLI still works normally.
 
 ---
 
@@ -272,7 +240,7 @@ npm run build
 - `internal-patch.ts` — Pi runtime patching and cleanup
 - `parse.ts` — thinking-step splitting, summaries, role inference, mode parsing
 - `persistence.ts` — project/global mode preference storage
-- `render.ts` — collapsed / summary / expanded terminal rendering
+- `render.ts` — collapsed, summary, and expanded terminal rendering
 - `state.ts` — shared mode, active-thinking state, patch lifecycle state
 - `types.ts` — shared contracts
 - `test/thinking-steps.test.ts` — unit and integration coverage
@@ -281,17 +249,20 @@ npm run build
 
 ## Design principles
 
-1. **Terminal-first over decorative**
-   - The goal is readability, not flashy formatting.
+1. **Readable over flashy**
+   - The goal is clarity, not decoration.
 
 2. **Faithful over clever**
-   - The renderer should not invent structure the source text does not support.
+   - The renderer should not invent meaning the source text does not support.
 
-3. **Small surface area**
-   - Parsing, rendering, state, and patching are kept separated on purpose.
+3. **Terminal-native over web-like**
+   - The output should feel right in a terminal first.
 
-4. **Strict validation**
-   - Changes should be backed by tests, especially around patch lifecycle and upstream-sensitive behavior.
+4. **Small surface area**
+   - Parsing, rendering, state, and patching stay deliberately separated.
+
+5. **Strict validation**
+   - Changes should be backed by tests, especially around patch lifecycle and compatibility.
 
 ---
 

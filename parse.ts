@@ -116,6 +116,21 @@ function isListParagraphChunk(chunk: string): boolean {
 	return firstLine ? LIST_ITEM_RE.test(firstLine) : false;
 }
 
+function isListContinuationChunk(chunk: string): boolean {
+	const normalized = normalizeNewlines(chunk).trim();
+	if (!normalized || isListParagraphChunk(normalized) || isStandaloneHeadingChunk(normalized)) {
+		return false;
+	}
+
+	const firstLine = normalized
+		.split("\n")
+		.map((line) => stripMarkdownEmphasis(line.trim()))
+		.find(Boolean);
+	if (!firstLine) return false;
+
+	return !/^(?:overall|in summary|to summarize|in conclusion|finally|that should|this should|those steps should|this confirms|that confirms|with that)\b/i.test(firstLine);
+}
+
 export function splitThinkingIntoStepTexts(text: string): string[] {
 	const normalized = normalizeNewlines(text).trim();
 	if (!normalized) return [];
@@ -140,7 +155,7 @@ export function splitThinkingIntoStepTexts(text: string): string[] {
 				continuationIndex += 1;
 			}
 
-			if (continuationIndex === mergedChunks.length || isListParagraphChunk(mergedChunks[continuationIndex]!)) {
+			if (continuationChunks.every(isListContinuationChunk) && (continuationIndex === mergedChunks.length || isListParagraphChunk(mergedChunks[continuationIndex]!))) {
 				steps[steps.length - 1] = previousStep + "\n\n" + continuationChunks.join("\n\n");
 				index = continuationIndex - 1;
 				continue;

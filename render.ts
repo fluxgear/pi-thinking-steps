@@ -93,6 +93,23 @@ function stepHeader(theme: ThinkingThemeLike, step: DerivedThinkingStep, active:
 	return `${theme.fg(connectorColor, connector)} ${icon} ${summaryText}`;
 }
 
+function wrapStepHeader(theme: ThinkingThemeLike, width: number, step: DerivedThinkingStep, active: boolean, connector: string): string[] {
+	const connectorColor = active ? "accent" : "muted";
+	const icon = theme.fg(roleColor(step.role), step.icon);
+	const prefix = `${theme.fg(connectorColor, connector)} ${icon} `;
+	const continuationPrefix = " ".repeat(visibleWidth(`${connector} ${step.icon} `));
+	const renderedSummary = renderThinkingInlineMarkup(theme, step.summary);
+	const summaryText = active ? theme.bold(renderedSummary) : renderedSummary;
+	const wrappedSummary = wrapTextWithAnsi(summaryText, Math.max(8, width - visibleWidth(prefix)));
+	if (wrappedSummary.length === 0) {
+		return [truncateToWidth(prefix, width, "")];
+	}
+
+	return wrappedSummary.map((line, index) =>
+		truncateToWidth(`${index === 0 ? prefix : continuationPrefix}${line}`, width, ""),
+	);
+}
+
 function pickCollapsedStep(steps: DerivedThinkingStep[], activeStepId?: string): DerivedThinkingStep | undefined {
 	if (steps.length === 0) return undefined;
 	if (activeStepId) {
@@ -195,7 +212,7 @@ function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedTh
 	for (let index = 0; index < steps.length; index++) {
 		const step = steps[index]!;
 		const connector = index === steps.length - 1 ? "└─" : "├─";
-		lines.push(truncateToWidth(stepHeader(theme, step, step.id === activeStepId, connector), width));
+		lines.push(...wrapStepHeader(theme, width, step, step.id === activeStepId, connector));
 	}
 	return lines;
 }
@@ -215,11 +232,13 @@ function renderThinkingDisplayLine(theme: ThinkingThemeLike, text: string): stri
 		return `${indent}${theme.bold(renderThinkingInlineMarkup(theme, content))}`;
 	}
 
-	const listMatch = text.match(/^(\s*)(?:[-*+]\s+|\d+[.)]\s+|[a-z][.)]\s+)(.+)$/i);
+	const listMatch = text.match(/^(\s*)([-*+]|\d+[.)]|[a-z][.)])\s+(.+)$/i);
 	if (listMatch) {
 		const indent = listMatch[1] ?? "";
-		const content = listMatch[2] ?? "";
-		return `${indent}${theme.fg("muted", "•")} ${renderThinkingInlineMarkup(theme, content)}`;
+		const marker = listMatch[2] ?? "";
+		const content = listMatch[3] ?? "";
+		const renderedMarker = /^[-*+]$/.test(marker) ? "•" : marker;
+		return `${indent}${theme.fg("muted", renderedMarker)} ${renderThinkingInlineMarkup(theme, content)}`;
 	}
 
 	return renderThinkingInlineMarkup(theme, text);
@@ -253,7 +272,7 @@ function renderExpanded(theme: ThinkingThemeLike, width: number, steps: DerivedT
 		const step = steps[index]!;
 		const connector = index === steps.length - 1 ? "└─" : "├─";
 		const isActive = step.id === activeStepId;
-		lines.push(truncateToWidth(stepHeader(theme, step, isActive, connector), width));
+		lines.push(...wrapStepHeader(theme, width, step, isActive, connector));
 
 		const normalizedBody = step.body.trim();
 		if (!normalizedBody) continue;
@@ -293,7 +312,7 @@ export class ThinkingStepsComponent implements Component {
 
 	render(width: number): string[] {
 		const mode = getThinkingStepsMode(this.scopeKey);
-		const active = getActiveThinkingState(this.messageTimestamp);
+		const active = getActiveThinkingState(this.messageTimestamp, this.scopeKey);
 		const activeStepId = active.active && active.contentIndex !== undefined
 			? [...this.steps].reverse().find((step) => step.contentIndex === active.contentIndex)?.id
 			: undefined;
