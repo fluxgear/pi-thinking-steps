@@ -24,9 +24,129 @@ interface ThinkingStepsGlobalState {
 	patchInstallPromise?: PatchInstallPromise | undefined;
 }
 
+interface LegacyThinkingStepsGlobalState {
+	mode?: unknown;
+	active?: unknown;
+	currentScopeKey?: unknown;
+	modeByScopeKey?: unknown;
+	activeByScopeKey?: unknown;
+	lastActiveByScopeKey?: unknown;
+	refreshToggleByScope?: unknown;
+	patchReleasesByScope?: unknown;
+	patchRefCount?: unknown;
+	patchCleanup?: unknown;
+	patchInstallPromise?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function normalizeThinkingScopeKey(scopeKey?: string): string {
+	const trimmed = scopeKey?.trim();
+	return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_SCOPE_KEY;
+}
+
+function normalizeThinkingMode(mode: unknown): ThinkingStepsMode {
+	return mode === "collapsed" || mode === "summary" || mode === "expanded" ? mode : "summary";
+}
+
+function normalizeActiveThinkingState(value: unknown): ActiveThinkingState {
+	if (!isRecord(value) || value.active !== true) {
+		return { active: false };
+	}
+	return {
+		active: true,
+		messageTimestamp: typeof value.messageTimestamp === "number" ? value.messageTimestamp : undefined,
+		contentIndex: typeof value.contentIndex === "number" ? value.contentIndex : undefined,
+	};
+}
+
+function normalizeModeByScopeKey(value: unknown, currentScopeKey: string, legacyMode: unknown): Record<string, ThinkingStepsMode> {
+	const modeByScopeKey: Record<string, ThinkingStepsMode> = {};
+	if (isRecord(value)) {
+		for (const [scopeKey, scopeMode] of Object.entries(value)) {
+			modeByScopeKey[normalizeThinkingScopeKey(scopeKey)] = normalizeThinkingMode(scopeMode);
+		}
+	}
+	modeByScopeKey[currentScopeKey] ??= normalizeThinkingMode(legacyMode);
+	return modeByScopeKey;
+}
+
+function normalizeActiveByScopeKey(value: unknown): Record<string, Record<string, ThinkingActiveEntry>> {
+	const activeByScopeKey: Record<string, Record<string, ThinkingActiveEntry>> = {};
+	if (!isRecord(value)) return activeByScopeKey;
+	for (const [scopeKey, entries] of Object.entries(value)) {
+		const normalizedScopeKey = normalizeThinkingScopeKey(scopeKey);
+		activeByScopeKey[normalizedScopeKey] = {};
+		if (!isRecord(entries)) continue;
+		for (const [messageTimestamp, entry] of Object.entries(entries)) {
+			if (!isRecord(entry)) continue;
+			activeByScopeKey[normalizedScopeKey]![messageTimestamp] = {
+				contentIndex: typeof entry.contentIndex === "number" ? entry.contentIndex : undefined,
+			};
+		}
+	}
+	return activeByScopeKey;
+}
+
+function normalizeLastActiveByScopeKey(value: unknown): Record<string, ActiveThinkingState> {
+	const lastActiveByScopeKey: Record<string, ActiveThinkingState> = {};
+	if (!isRecord(value)) return lastActiveByScopeKey;
+	for (const [scopeKey, entry] of Object.entries(value)) {
+		lastActiveByScopeKey[normalizeThinkingScopeKey(scopeKey)] = normalizeActiveThinkingState(entry);
+	}
+	return lastActiveByScopeKey;
+}
+
+function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinkingStepsGlobalState): ThinkingStepsGlobalState {
+	const currentScopeKey = normalizeThinkingScopeKey(typeof state.currentScopeKey === "string" ? state.currentScopeKey : undefined);
+	const modeByScopeKey = normalizeModeByScopeKey(state.modeByScopeKey, currentScopeKey, state.mode);
+	const activeByScopeKey = normalizeActiveByScopeKey(state.activeByScopeKey);
+	const lastActiveByScopeKey = normalizeLastActiveByScopeKey(state.lastActiveByScopeKey);
+	const legacyActive = normalizeActiveThinkingState(state.active);
+	const refreshToggleByScope: Record<string, boolean> = isRecord(state.refreshToggleByScope)
+		? Object.fromEntries(Object.entries(state.refreshToggleByScope).map(([scopeKey, enabled]) => [normalizeThinkingScopeKey(scopeKey), enabled === true]))
+		: {};
+	const patchReleasesByScope: Record<string, PatchRelease[]> = isRecord(state.patchReleasesByScope)
+		? Object.fromEntries(Object.entries(state.patchReleasesByScope).map(([scopeKey, releases]) => [normalizeThinkingScopeKey(scopeKey), Array.isArray(releases) ? releases as PatchRelease[] : []]))
+		: {};
+
+	for (const scopeKey of Object.keys(modeByScopeKey)) {
+		activeByScopeKey[scopeKey] ??= {};
+		lastActiveByScopeKey[scopeKey] ??= { active: false };
+		refreshToggleByScope[scopeKey] ??= false;
+		patchReleasesByScope[scopeKey] ??= [];
+	}
+
+	if (legacyActive.active) {
+		lastActiveByScopeKey[currentScopeKey] = legacyActive;
+		if (legacyActive.messageTimestamp !== undefined) {
+			activeByScopeKey[currentScopeKey]![String(legacyActive.messageTimestamp)] = {
+				contentIndex: legacyActive.contentIndex,
+			};
+		}
+	}
+
+	state.currentScopeKey = currentScopeKey;
+	state.modeByScopeKey = modeByScopeKey;
+	state.activeByScopeKey = activeByScopeKey;
+	state.lastActiveByScopeKey = lastActiveByScopeKey;
+	state.refreshToggleByScope = refreshToggleByScope;
+	state.patchReleasesByScope = patchReleasesByScope;
+	state.patchRefCount = typeof state.patchRefCount === "number" && Number.isFinite(state.patchRefCount)
+		? state.patchRefCount
+		: 0;
+	state.patchCleanup = typeof state.patchCleanup === "function" ? state.patchCleanup as PatchCleanup : undefined;
+	state.patchInstallPromise = state.patchInstallPromise instanceof Promise ? state.patchInstallPromise as PatchInstallPromise : undefined;
+	return state;
+}
+
 const globalState = (() => {
-	const existing = (globalThis as Record<PropertyKey, unknown>)[STATE_KEY] as ThinkingStepsGlobalState | undefined;
-	if (existing) return existing;
+	const existing = (globalThis as Record<PropertyKey, unknown>)[STATE_KEY];
+	if (isRecord(existing)) {
+		return ensureGlobalStateShape(existing as unknown as ThinkingStepsGlobalState & LegacyThinkingStepsGlobalState);
+	}
 	const created: ThinkingStepsGlobalState = {
 		currentScopeKey: DEFAULT_SCOPE_KEY,
 		modeByScopeKey: { [DEFAULT_SCOPE_KEY]: "summary" },
@@ -39,11 +159,6 @@ const globalState = (() => {
 	(globalThis as Record<PropertyKey, unknown>)[STATE_KEY] = created;
 	return created;
 })();
-
-function normalizeThinkingScopeKey(scopeKey?: string): string {
-	const trimmed = scopeKey?.trim();
-	return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_SCOPE_KEY;
-}
 
 function ensureScopeState(scopeKey: string): void {
 	if (!(scopeKey in globalState.modeByScopeKey)) {
