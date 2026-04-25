@@ -544,19 +544,20 @@ describe("renderThinkingStepsLines", () => {
 		assert.ok(!joined.includes("`render.ts`"));
 	});
 
-	it("summary mode renders one summarized line per step with pipe connectors", () => {
+	it("summary mode renders one summarized timeline row per step", () => {
 		const lines = renderThinkingStepsLines(theme, 120, {
 			mode: "summary",
 			steps,
 			activeStepId: steps[1]?.id,
-			isActive: false,
+			isActive: true,
 		});
 		assert.equal(stripAnsi(lines[0] ?? ""), "┆ Thinking Steps · Summary");
-		const stepLines = lines.filter((line) => /^(├─|└─)/.test(stripAnsi(line)));
+		const stepLines = lines.filter((line) => /^[│ ] ● /.test(stripAnsi(line)));
 		assert.equal(stepLines.length, 3);
-		assert.ok(stepLines.some((line) => stripAnsi(line).includes("◫ Inspect the current renderer implementation.")));
-		assert.ok(stepLines.some((line) => stripAnsi(line).includes("↔ Compare how visibility toggling works.")));
-		assert.ok(stepLines.some((line) => stripAnsi(line).includes("✓ Verify the refresh path after mode changes.")));
+		assert.ok(stepLines.some((line) => stripAnsi(line).includes("│ ● ◫ Inspect the current renderer implementation.")));
+		assert.ok(stepLines.some((line) => stripAnsi(line).includes("│ ● ↔ Compare how visibility toggling works.")));
+		assert.ok(stepLines.some((line) => stripAnsi(line).includes("  ● ✓ Verify the refresh path after mode changes.")));
+		assert.ok(lines.some((line) => line.includes("\x1b[1m") && stripAnsi(line).includes("Compare how visibility toggling works.")));
 	});
 
 	it("summary mode strips raw markdown markers from visible summaries", () => {
@@ -579,7 +580,7 @@ describe("renderThinkingStepsLines", () => {
 		assert.ok(!joined.includes("**refreshes**"));
 	});
 
-	it("expanded mode renders full step details with cleaner continuation pipes", () => {
+	it("expanded mode renders full step details with timeline gutters", () => {
 		const lines = renderThinkingStepsLines(theme, 64, {
 			mode: "expanded",
 			steps,
@@ -588,11 +589,37 @@ describe("renderThinkingStepsLines", () => {
 		});
 		const joined = stripAnsi(lines.join("\n"));
 		assert.ok(joined.includes("Thinking Steps · Expanded"));
-		assert.ok(joined.includes("├─ ◫ Inspect the current renderer implementation."));
-		assert.ok(joined.includes("│  Inspect the current renderer implementation."));
-		assert.ok(joined.includes("└─ ✓ Verify the refresh path after mode changes."));
-		assert.ok(joined.includes("   Verify the refresh path after mode changes."));
-		assert.ok(!joined.includes("│  Verify the refresh path after mode changes."));
+		assert.ok(joined.includes("│ ● ◫ Inspect the current renderer implementation."));
+		assert.ok(joined.includes("│   Inspect the current renderer implementation."));
+		assert.ok(joined.includes("  ● ✓ Verify the refresh path after mode changes."));
+		assert.ok(joined.includes("    Verify the refresh path after mode changes."));
+		assert.ok(!joined.includes("├─"));
+		assert.ok(!joined.includes("└─"));
+		assert.ok(!joined.includes("│   Verify the refresh path after mode changes."));
+	});
+
+	it("summary and expanded modes accent only the active timeline node", () => {
+		const ansiTheme = createAnsiTheme();
+		const summaryLines = renderThinkingStepsLines(ansiTheme, 120, {
+			mode: "summary",
+			steps,
+			activeStepId: steps[1]?.id,
+			isActive: true,
+		});
+		const expandedLines = renderThinkingStepsLines(ansiTheme, 120, {
+			mode: "expanded",
+			steps,
+			activeStepId: steps[1]?.id,
+			isActive: true,
+		});
+
+		const summaryActiveLine = summaryLines.find((line) => stripAnsi(line).includes("Compare how visibility toggling works.")) ?? "";
+		const expandedActiveLine = expandedLines.find((line) => stripAnsi(line).includes("Compare how visibility toggling works.")) ?? "";
+		const summaryInactiveLine = summaryLines.find((line) => stripAnsi(line).includes("Inspect the current renderer implementation.")) ?? "";
+
+		assert.ok(summaryActiveLine.includes("\x1b[36m●"));
+		assert.ok(expandedActiveLine.includes("\x1b[36m●"));
+		assert.ok(!summaryInactiveLine.includes("\x1b[36m●"));
 	});
 
 	it("expanded mode renders markdown as terminal formatting instead of raw markers", () => {
@@ -743,7 +770,7 @@ describe("integration patch", () => {
 			const component = new AssistantMessageComponent(message, false);
 			let lines = component.render(100).map(stripAnsi);
 			assert.ok(lines.some((line) => line.includes("Thinking Steps · Summary")));
-			assert.equal(lines.filter((line) => line.startsWith("├─") || line.startsWith("└─")).length, 3);
+			assert.equal(lines.filter((line) => /^[│ ] ● /.test(line)).length, 3);
 			assert.ok(lines.some((line) => line.includes("Final answer.")));
 
 			setThinkingStepsMode("collapsed");

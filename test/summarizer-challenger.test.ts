@@ -233,11 +233,36 @@ describe("summary mode top-N selection", () => {
 		});
 
 		const joined = stripAnsi(lines.join("\n"));
-		const stepLines = lines.filter((line) => /^(├─|└─)/.test(stripAnsi(line)));
+		const stepLines = lines.filter((line) => /^[│ ] ● /.test(stripAnsi(line)));
 		assert.equal(stepLines.length, 5);
 		assert.match(joined, /Npm test failed with exit code 1/i);
 		assert.match(joined, /Decided to keep the existing logical step splitting/i);
 		assert.doesNotMatch(joined, /Inspect alpha\.ts for context/i);
+	});
+
+	it("force-includes the active step when summary mode selects a top-N subset", () => {
+		const steps = deriveThinkingSteps([
+			{ contentIndex: 0, text: "Inspect alpha.ts for context." },
+			{ contentIndex: 1, text: "Inspect beta.ts for context." },
+			{ contentIndex: 2, text: "npm test failed with exit code 1." },
+			{ contentIndex: 3, text: "Inspect gamma.ts for context." },
+			{ contentIndex: 4, text: "I decided to keep the existing logical step splitting and only replace the ranking path." },
+			{ contentIndex: 5, text: "Inspect delta.ts for the currently streaming renderer branch." },
+		]);
+
+		const lines = renderThinkingStepsLines(theme, 120, {
+			mode: "summary",
+			steps,
+			activeStepId: steps[5]?.id,
+			isActive: true,
+		});
+
+		const joined = stripAnsi(lines.join("\n"));
+		const stepLines = lines.filter((line) => /^[│ ] ● /.test(stripAnsi(line)));
+		assert.equal(stepLines.length, 5);
+		assert.match(joined, /Inspect delta\.ts for the currently streaming renderer branch/i);
+		assert.match(joined, /Npm test failed with exit code 1/i);
+		assert.match(joined, /Decided to keep the existing logical step splitting/i);
 	});
 
 	it("restores chronological order after selecting the strongest summary steps", () => {
