@@ -86,19 +86,20 @@ function renderThinkingInlineSegment(theme: ThinkingThemeLike, segment: InlineSe
 	return theme.fg("thinkingText", segment.text);
 }
 
-function stepHeader(theme: ThinkingThemeLike, step: DerivedThinkingStep, active: boolean, connector: string): string {
-	const connectorColor = active ? "accent" : "muted";
-	const icon = theme.fg(roleColor(step.role), step.icon);
-	const renderedSummary = renderThinkingInlineMarkup(theme, step.summary);
-	const summaryText = active ? theme.bold(renderedSummary) : renderedSummary;
-	return `${theme.fg(connectorColor, connector)} ${icon} ${summaryText}`;
+function timelineRail(theme: ThinkingThemeLike, isLast: boolean): string {
+	return isLast ? " " : theme.fg("muted", "│");
 }
 
-function wrapStepHeader(theme: ThinkingThemeLike, width: number, step: DerivedThinkingStep, active: boolean, connector: string): string[] {
-	const connectorColor = active ? "accent" : "muted";
+function timelineNode(theme: ThinkingThemeLike, active: boolean): string {
+	return theme.fg(active ? "accent" : "muted", "●");
+}
+
+function wrapStepHeader(theme: ThinkingThemeLike, width: number, step: DerivedThinkingStep, active: boolean, isLast: boolean): string[] {
+	const rail = timelineRail(theme, isLast);
+	const node = timelineNode(theme, active);
 	const icon = theme.fg(roleColor(step.role), step.icon);
-	const prefix = `${theme.fg(connectorColor, connector)} ${icon} `;
-	const continuationPrefix = " ".repeat(visibleWidth(`${connector} ${step.icon} `));
+	const prefix = `${rail} ${node} ${icon} `;
+	const continuationPrefix = `${timelineRail(theme, isLast)} ${" ".repeat(visibleWidth(`● ${step.icon} `))}`;
 	const renderedSummary = renderThinkingInlineMarkup(theme, step.summary);
 	const summaryText = active ? theme.bold(renderedSummary) : renderedSummary;
 	const wrappedSummary = wrapTextWithAnsi(summaryText, Math.max(8, width - visibleWidth(prefix)));
@@ -109,6 +110,10 @@ function wrapStepHeader(theme: ThinkingThemeLike, width: number, step: DerivedTh
 	return wrappedSummary.map((line, index) =>
 		truncateToWidth(`${index === 0 ? prefix : continuationPrefix}${line}`, width, ""),
 	);
+}
+
+function timelineBodyPrefix(theme: ThinkingThemeLike, isLast: boolean): string {
+	return `${timelineRail(theme, isLast)}   `;
 }
 
 function pickCollapsedStep(steps: DerivedThinkingStep[], activeStepId?: string): DerivedThinkingStep | undefined {
@@ -227,11 +232,13 @@ function stepHasEventType(step: DerivedThinkingStep, type: string): boolean {
 	return step.summaryEvents?.some((event) => event.type === type) ?? false;
 }
 
-function selectSummarySteps(steps: DerivedThinkingStep[]): DerivedThinkingStep[] {
+function selectSummarySteps(steps: DerivedThinkingStep[], activeStepId?: string): DerivedThinkingStep[] {
 	if (steps.length <= 5) return steps;
 
 	const indexed = steps.map((step, index) => ({ step, index }));
 	const selected = new Set<number>();
+	const activeIndex = activeStepId ? steps.findIndex((step) => step.id === activeStepId) : -1;
+	if (activeIndex !== -1) selected.add(activeIndex);
 	let latestFailureIndex = -1;
 	let latestSuccessAfterFailureIndex = -1;
 
@@ -273,11 +280,11 @@ function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedTh
 	const lines = [
 		truncateToWidth(`${theme.fg("muted", "┆")} ${theme.fg("dim", "Thinking Steps · Summary")}`, width),
 	];
-	const visibleSteps = selectSummarySteps(steps);
+	const visibleSteps = selectSummarySteps(steps, activeStepId);
 	for (let index = 0; index < visibleSteps.length; index++) {
 		const step = visibleSteps[index]!;
-		const connector = index === visibleSteps.length - 1 ? "└─" : "├─";
-		lines.push(...wrapStepHeader(theme, width, step, step.id === activeStepId, connector));
+		const isLast = index === visibleSteps.length - 1;
+		lines.push(...wrapStepHeader(theme, width, step, step.id === activeStepId, isLast));
 	}
 	return lines;
 }
@@ -335,15 +342,14 @@ function renderExpanded(theme: ThinkingThemeLike, width: number, steps: DerivedT
 
 	for (let index = 0; index < steps.length; index++) {
 		const step = steps[index]!;
-		const connector = index === steps.length - 1 ? "└─" : "├─";
+		const isLast = index === steps.length - 1;
 		const isActive = step.id === activeStepId;
-		lines.push(...wrapStepHeader(theme, width, step, isActive, connector));
+		lines.push(...wrapStepHeader(theme, width, step, isActive, isLast));
 
 		const normalizedBody = step.body.trim();
 		if (!normalizedBody) continue;
 
-		const bodyPrefix = index === steps.length - 1 ? "   " : `${theme.fg("muted", "│")}  `;
-		lines.push(...renderWrappedRawText(theme, normalizedBody, width, bodyPrefix));
+		lines.push(...renderWrappedRawText(theme, normalizedBody, width, timelineBodyPrefix(theme, isLast)));
 	}
 
 	return lines;

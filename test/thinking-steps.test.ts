@@ -545,7 +545,8 @@ describe("renderThinkingStepsLines", () => {
 	});
 
 	it("summary mode renders one summarized timeline row per step", () => {
-		const lines = renderThinkingStepsLines(theme, 120, {
+		const ansiTheme = createAnsiTheme();
+		const lines = renderThinkingStepsLines(ansiTheme, 120, {
 			mode: "summary",
 			steps,
 			activeStepId: steps[1]?.id,
