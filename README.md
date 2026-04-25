@@ -1,62 +1,73 @@
 # Pi Thinking Steps
 
+<div align="center">
+  <img src="./assets/readme-hero.svg" alt="Pi Thinking Steps hero graphic showing collapsed, summary, and expanded terminal views" width="1100" />
+</div>
+
 <p align="center">
-  <strong>A clean, terminal-native thinking view for Pi.</strong><br />
-  Make provider reasoning easier to follow without changing what it says.
+  <strong>Faithful, terminal-native thinking visualization for Pi.</strong><br />
+  Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/tags"><img alt="version" src="https://img.shields.io/badge/version-1.0.1-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.4"><img alt="release" src="https://img.shields.io/badge/release-v1.0.4-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
-  <img alt="typescript" src="https://img.shields.io/badge/TypeScript-Strict-3178c6" />
-  <img alt="terminal" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
+  <img alt="pi versions" src="https://img.shields.io/badge/pinned%20Pi%20packages-0.69.0-0ea5e9" />
+  <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
+  <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
 </p>
 
 ---
 
-## Overview
+## Why this exists
 
-Pi already exposes provider thinking. Pi Thinking Steps turns that raw stream into something more readable, more structured, and easier to scan in a real terminal.
+Pi already exposes provider thinking, but raw reasoning streams are hard to scan in a real terminal. Pi Thinking Steps keeps the source text faithful while making it dramatically easier to follow:
 
-It stays intentionally conservative:
+- less visual noise while a model is still thinking
+- more structure when you want the reasoning flow at a glance
+- cleaner full-detail rendering when you need to inspect the exact text
+- no invented reasoning, synthetic logic, or browser-style chrome
 
-- no invented reasoning
-- no synthetic structure that changes meaning
-- no web-style decoration
-- no break from Pi's terminal workflow
+The goal is simple: **preserve meaning, improve readability, and stay native to Pi's TUI.**
 
-The result is simple: clearer thinking output, with the original intent preserved.
+---
+
+## Visual tour
+
+<div align="center">
+  <img src="./assets/modes-overview.svg" alt="Overview of the collapsed, summary, and expanded thinking modes" width="1100" />
+</div>
 
 ---
 
 ## What you get
 
 - **Three focused modes** — `collapsed`, `summary`, `expanded`
-- **Terminal-first rendering** — built for width constraints, ANSI safety, and live output
+- **Terminal-first rendering** — width-aware, ANSI-safe, and live-update friendly
 - **Faithful parsing** — deterministic step derivation and restrained summarization
-- **Markdown-aware display** — headings, bullets, ordered lists, code spans, emphasis
-- **Scoped persistence** — session, project, and global defaults
+- **Markdown-aware output** — headings, bullets, ordered lists, code spans, and emphasis render cleanly
+- **Scoped persistence** — session, project, and global defaults with predictable restore precedence
 - **Patch safety** — isolated, reversible, reference-counted runtime patching
-- **Regression coverage** — parser, renderer, lifecycle, and compatibility tests
+- **Regression coverage** — parser, renderer, lifecycle, compatibility, and metadata checks
 
 ---
 
 ## The three modes
 
-| Mode | Purpose |
-|---|---|
-| `collapsed` | One compact live line for the active step |
-| `summary` | One summarized line per derived step |
-| `expanded` | Full step detail with structured terminal flow |
+| Mode | Best for | Behavior |
+|---|---|---|
+| `collapsed` | Live active thinking | Shows a single compact line for the highest-signal active step |
+| `summary` | Flow at a glance | Shows one summarized line per derived step in chronological order |
+| `expanded` | Deep inspection | Shows the full step text in a cleaner, structured terminal layout |
 
 ### `collapsed`
-Use it when you want minimal visual noise while the model is still thinking.
+Use it when you want the smallest possible thinking footprint while the model is still working.
 
 ### `summary`
-Use it when you want the reasoning flow at a glance.
+Use it when you want to understand the reasoning path quickly without reading the full transcript.
 
 ### `expanded`
-Use it when you want the full text, but in a cleaner terminal presentation than the raw transcript.
+Use it when you want the whole text, but formatted for a terminal instead of dumped as a raw stream.
 
 ---
 
@@ -74,7 +85,7 @@ Use it when you want the full text, but in a cleaner terminal presentation than 
 
 ---
 
-## Persistence
+## Persistence and restore precedence
 
 Mode restoration follows this order:
 
@@ -120,25 +131,23 @@ Use plain `/thinking-steps <mode>` when the choice should stay local to the curr
 
 ## Rendering behavior
 
-Pi Thinking Steps is designed to improve readability without changing meaning.
+Pi Thinking Steps is built to improve readability **without changing meaning**.
 
 ### Parsing and step derivation
 
-The parser uses deterministic rules to keep step boundaries believable and stable.
-
-Examples:
+The parser uses deterministic rules to keep step boundaries believable and stable. Examples:
 
 - standalone markdown headings stay attached to the body they introduce
 - list items split into separate steps when that improves scanability
 - blank-line continuation paragraphs stay attached to the correct list item
 - standalone concluding prose after a list stays separate from the final list item
-- redacted reasoning remains clearly marked as provider-hidden
+- provider-hidden reasoning remains clearly marked as hidden
 
 ### Display formatting
 
 The renderer normalizes markdown-like content for terminal display:
 
-- headings render as headings instead of raw `#` clutter
+- headings render as headings instead of leaking raw `#` markers
 - unordered list items render with clean bullets
 - ordered and lettered list markers are preserved
 - backticks render as code-styled inline text
@@ -147,14 +156,12 @@ The renderer normalizes markdown-like content for terminal display:
 
 ### Terminal-first constraints
 
-This extension is built for a real terminal, not a browser UI.
-
-That means:
+This extension is designed for a real terminal, not a browser UI. That means:
 
 - width-aware wrapping matters
 - ANSI-safe rendering matters
-- over-decoration is avoided
-- output should stay readable in narrower layouts
+- over-decoration is intentionally avoided in the live TUI
+- the output should remain readable in narrow layouts
 
 ---
 
@@ -162,7 +169,7 @@ That means:
 
 Pi currently exposes only a minimal public hook for built-in thinking rendering: `setHiddenThinkingLabel`.
 
-Because of that limitation, Pi Thinking Steps patches Pi's internal `AssistantMessageComponent` at runtime and replaces the default visible thinking rendering path with a custom renderer.
+To deliver a full three-mode thinking view, Pi Thinking Steps patches Pi's internal `AssistantMessageComponent` at runtime and replaces the default visible thinking rendering path with a custom renderer.
 
 That patch layer is:
 
@@ -174,7 +181,7 @@ That patch layer is:
 
 ---
 
-## Compatibility
+## Compatibility contract
 
 This extension intentionally depends on Pi's current internal TUI implementation.
 
@@ -190,7 +197,7 @@ That means:
 - the pinned Pi package versions and `package-lock.json` matter
 - `npm test` is part of the maintenance contract, not an optional extra
 
-If Pi changes its internal renderer shape, this extension may need updates even if the public CLI still works normally.
+The current package is pinned to Pi package version `0.69.0` in `package.json`.
 
 ---
 
@@ -234,6 +241,19 @@ npm run build
 
 ---
 
+## Published package contents
+
+The package ships:
+
+- `README.md`
+- `LICENSE`
+- the extension TypeScript sources
+- the README SVG assets under `assets/`
+
+That keeps the GitHub README and the published package presentation aligned.
+
+---
+
 ## Project structure
 
 - `index.ts` — extension entry point, commands, shortcut, lifecycle hooks
@@ -244,6 +264,7 @@ npm run build
 - `state.ts` — shared mode, active-thinking state, patch lifecycle state
 - `types.ts` — shared contracts
 - `test/thinking-steps.test.ts` — unit and integration coverage
+- `test/summarizer-challenger.test.ts` — focused summarizer-regression coverage
 
 ---
 
@@ -268,8 +289,7 @@ npm run build
 
 ## Versioning
 
-For the canonical package version, see [`package.json`](./package.json).
-For release points, use the repository tags.
+For the canonical package version, see [`package.json`](./package.json). For release points, use the repository tags.
 
 ---
 
