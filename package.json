@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-steps",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "license": "MIT",
   "type": "module",
