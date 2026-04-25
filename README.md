@@ -198,11 +198,26 @@ If Pi changes its internal renderer shape, this extension may need updates even 
 
 ## Quick start
 
-From the repository root:
+For a one-off test from the repository root:
 
 ```bash
+npm install
 pi -e ./index.ts
 ```
+
+For normal use with `/reload`, install the repository as a Pi package once:
+
+```bash
+pi install /absolute/path/to/pi-thinking-steps
+```
+
+For this checkout, that is:
+
+```bash
+pi install /Users/roach/pi-thinking-steps
+```
+
+Then restart Pi or run `/reload`. The command is `/thinking-steps`.
 
 The package entry point is already configured in `package.json`:
 
