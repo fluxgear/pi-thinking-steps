@@ -93,22 +93,24 @@ Use plain `/thinking-steps <mode>` when the choice should stay local to the curr
 
 ```text
 ┆ Thinking Steps · Summary
-├─ ◫ Inspect the current renderer implementation.
-├─ ↔ Compare how visibility toggling works.
-└─ ✓ Verify the refresh path after mode changes.
+│ ● ◫ Inspect the current renderer implementation.
+│ ● ↔ Compare how visibility toggling works.
+  ● ✓ Verify the refresh path after mode changes.
 ```
 
 ### Expanded
 
 ```text
 ┆ Thinking Steps · Expanded
-├─ ◫ Inspect the current renderer implementation.
-│  Inspect the current renderer implementation.
-├─ ↔ Compare how visibility toggling works.
-│  Compare how visibility toggling works.
-└─ ✓ Verify the refresh path after mode changes.
-   Verify the refresh path after mode changes.
+│ ● ◫ Inspect the current renderer implementation.
+│   Inspect the current renderer implementation.
+│ ● ↔ Compare how visibility toggling works.
+│   Compare how visibility toggling works.
+  ● ✓ Verify the refresh path after mode changes.
+    Verify the refresh path after mode changes.
 ```
+
+Timeline nodes represent reasoning steps that have already been observed in the provider stream. The extension does not invent pending or future steps; while streaming, the currently active observed step is highlighted, and after streaming ends the observed steps are rendered as completed timeline nodes.
 
 ### Collapsed
 
