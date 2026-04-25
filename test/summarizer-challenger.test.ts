@@ -125,11 +125,12 @@ describe("unchanged semantic-quality regressions", () => {
 		assert.doesNotMatch(summary, /^Npm run build passed once/i);
 	});
 
-	it("renders the expanded-mode preservation decision as a concise product constraint", () => {
+	it("renders the expanded-mode preservation decision with its scope boundary", () => {
 		const summary = summarizeThinkingText(
 			"I decided to preserve expanded mode behavior and limit the algorithmic changes to collapsed and summary selection.",
 		);
-		assert.match(summary, /Decided to preserve expanded mode behavior/i);
+		assert.match(summary, /expanded mode/i);
+		assert.match(summary, /collapsed and summary selection|collapsed\/summary selection/i);
 		assert.doesNotMatch(summary, /^I decided to preserve expanded mode behavior/i);
 	});
 
@@ -141,11 +142,13 @@ describe("unchanged semantic-quality regressions", () => {
 		assert.doesNotMatch(summary, /^Instead of rewriting the whole summarizer/i);
 	});
 
-	it("renders the hybrid baseline-plus-challenger plan concisely", () => {
+	it("renders the hybrid baseline-plus-challenger plan without dropping the challenger fact", () => {
 		const summary = summarizeThinkingText(
 			"The safer plan is to keep the current summarizer as the baseline, add an event-aware challenger, and only choose the challenger when it is clearly better.",
 		);
-		assert.match(summary, /Plan: keep current summarizer as baseline; use challenger only when clearly better/i);
+		assert.match(summary, /current summarizer.*baseline|baseline.*current summarizer/i);
+		assert.match(summary, /challenger/i);
+		assert.match(summary, /better/i);
 		assert.doesNotMatch(summary, /^The safer plan is to keep the current summarizer as the baseline/i);
 	});
 
@@ -213,6 +216,41 @@ describe("collapsed selection priority", () => {
 	});
 });
 
+describe("failure and blocker icon semantics", () => {
+	const theme = createPlainTheme();
+
+	it("renders explicit failures with the error icon", () => {
+		const steps = deriveThinkingSteps([
+			{ contentIndex: 0, text: "npm test failed with exit code 1." },
+		]);
+
+		const lines = renderThinkingStepsLines(theme, 120, {
+			mode: "collapsed",
+			steps,
+			isActive: false,
+			nowMs: 0,
+		});
+
+		const joined = stripAnsi(lines.join("\n"));
+		assert.match(joined, /! Npm test failed with exit code 1/i);
+	});
+
+	it("renders explicit blockers with the error icon", () => {
+		const steps = deriveThinkingSteps([
+			{ contentIndex: 0, text: "Project reindex is locked by another operation, so I cannot refresh the Larra index yet." },
+		]);
+
+		const lines = renderThinkingStepsLines(theme, 120, {
+			mode: "collapsed",
+			steps,
+			isActive: false,
+			nowMs: 0,
+		});
+
+		const joined = stripAnsi(lines.join("\n"));
+		assert.match(joined, /! Project reindex is locked by another operation/i);
+	});
+});
 describe("summary mode top-N selection", () => {
 	const theme = createPlainTheme();
 

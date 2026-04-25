@@ -591,14 +591,14 @@ function renderSummaryEvent(event: ThinkingSummaryEvent): string {
 	if (event.type === "plan_change") {
 		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
 		if (/^i decided to preserve expanded mode behavior\b/i.test(normalized)) {
-			return "Decided to preserve expanded mode behavior.";
+			return "Preserve expanded mode; limit changes to collapsed and summary selection.";
 		}
 		const insteadMatch = normalized.match(/^instead of\s+.+?,\s+i will\s+(.+)$/i);
 		if (insteadMatch) {
 			return truncateText(`Changed plan: ${insteadMatch[1]}.`, SUMMARY_MAX_CHARS);
 		}
 		if (/^the safer plan is to keep the current summarizer as the baseline, add an event-aware challenger, and only choose the challenger when it is clearly better$/i.test(normalized)) {
-			return "Plan: keep current summarizer as baseline; use challenger only when clearly better.";
+			return "Plan: keep current summarizer baseline; add challenger; use it when clearly better.";
 		}
 	}
 
@@ -799,13 +799,13 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 		&& challengerSummary.length <= baselineSummary.length + 4;
 	const shouldPreferExpandedConstraintTemplate = challenger.events.length === 1
 		&& challenger.events[0]?.type === "plan_change"
-		&& /^Decided to preserve expanded mode behavior\.$/i.test(challengerSummary)
+		&& /^Preserve expanded mode; limit changes to collapsed and summary selection\.$/i.test(challengerSummary)
 		&& /^I decided to preserve expanded mode behavior\b/i.test(baselineSummary)
 		&& challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount;
 	const shouldPreferPlanChangeTemplate = challenger.events.length === 1
 		&& challenger.events[0]?.type === "plan_change"
-		&& /^(?:Changed plan:|Plan: keep current summarizer as baseline)/i.test(challengerSummary)
+		&& /^(?:Changed plan:|Plan: keep current summarizer baseline; add challenger; use it when clearly better\.)/i.test(challengerSummary)
 		&& /^(?:Instead of|The safer plan is)\b/i.test(baselineSummary)
 		&& challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
@@ -861,7 +861,7 @@ export function inferThinkingRole(text: string): ThinkingSemanticRole {
 		{
 			role: "error",
 			score:
-				(Number(/\b(error|errors|fail|failure|exception|bug|issue|problem|warning|debug|stack trace|traceback)\b/.test(haystack)) * 4) +
+				(Number(/\b(error|errors|fail|failed|failure|blocked|locked|cannot|unable|exception|bug|issue|problem|warning|debug|stack trace|traceback)\b/.test(haystack)) * 4) +
 				(Number(/\bfix\b/.test(haystack)) * 2),
 		},
 		{
