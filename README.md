@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/tags"><img alt="version" src="https://img.shields.io/badge/version-1.0.1-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/tags"><img alt="version" src="https://img.shields.io/badge/version-1.0.2-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-Strict-3178c6" />
   <img alt="terminal" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -215,6 +215,12 @@ For this checkout, that is:
 
 ```bash
 pi install /Users/roach/pi-thinking-steps
+```
+
+Confirm the package is installed:
+
+```bash
+pi list
 ```
 
 Then restart Pi or run `/reload`. The command is `/thinking-steps`.
