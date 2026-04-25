@@ -1,4 +1,4 @@
-import type { DerivedThinkingStep, ThinkingSemanticRole, ThinkingSourceBlock, ThinkingStepsMode } from "./types.js";
+import type { DerivedThinkingStep, ThinkingSemanticRole, ThinkingSourceBlock, ThinkingStepsMode, ThinkingSummaryEvent } from "./types.js";
 
 const LIST_ITEM_RE = /^\s*(?:[-*+]\s+|\d+[.)]\s+|[a-z][.)]\s+)/i;
 const HEADING_RE = /^\s{0,3}#{1,6}\s+/;
@@ -73,8 +73,9 @@ function splitListChunk(chunk: string): string[] {
 
 function stripMarkdownEmphasis(text: string): string {
 	return text
-		.replace(/(\*\*|__)(.+?)\1/g, "$2")
-		.replace(/(\*|_)([^*_]+?)\1/g, "$2");
+		.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2")
+		.replace(/(^|[^\w/.-])\*(?=\S)([\s\S]*?\S)\*(?=[^\w/.-]|$)/g, "$1$2")
+		.replace(/(^|[^\w/.-])_(?=\S)([\s\S]*?\S)_(?=[^\w/.-]|$)/g, "$1$2");
 }
 
 function isStandaloneHeadingChunk(chunk: string): boolean {
@@ -167,27 +168,134 @@ export function splitThinkingIntoStepTexts(text: string): string[] {
 	return steps.length > 0 ? steps : [normalized];
 }
 
-export function summarizeThinkingText(text: string, fallback = "Reasoning is hidden by the provider."): string {
-	const SUMMARY_MAX_CHARS = 84;
-	const MMR_LAMBDA = 0.7;
+const SUMMARY_MAX_CHARS = 84;
+const MMR_LAMBDA = 0.7;
+const PURE_TIMESTAMP_RE = /^(?:\[)?\d{1,2}:\d{2}(?::\d{2})?(?:\])?$|^\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}/i;
+const SEPARATOR_RE = /^[\s`~!@#$%^&*()_+=\-\[\]{}\|;:'",.<>/?·]+$/;
+const SPINNER_STATUS_RE = /^(?:thinking|loading|working|running|processing|waiting|done|complete|completed|idle)(?:[ .…:-]+)?$/i;
+const PATH_TOKEN_RE = /\b(?:[a-z0-9_-]+[/.])+[a-z0-9_-]+\b/gi;
+const SYMBOL_TOKEN_RE = /\b[a-z_][a-z0-9_]*\([^)]*\)/gi;
+const ARTIFACT_RE = /(?:\b[a-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|txt|yml|yaml|lock)\b|\b[a-z_][a-z0-9_]*\([^)]*\)|`[^`]+`|\b(?:npm|node|git|pi|larra|mcp|tsx|tsc)\b|\b(?:ts\d{3,5}|err_[a-z0-9_]+)\b)/i;
+const FAILURE_CUE_RE = /\b(failed|failure|error|errors|blocked|abort(?:ed)?|cannot|unable|did not complete|not completed|reverted|rollback|locked)\b/i;
+const SUCCESS_CUE_RE = /\b(pass(?:ed)?|succeed(?:ed)?)\b/i;
+const DECISION_CUE_RE = /\b(decided|decision|chose|switched|replaced|confirmed|fixed|resolved|discovered|found|preserve|keeping|keep)\b/i;
+const PLAN_CHANGE_CUE_RE = /\b(instead of|rather than|safer plan|plan changed|keep the current summarizer as the baseline|only choose the challenger|limit the algorithmic changes)\b/i;
+const ACTION_CUE_RE = /\b(retry|rerun|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
+const NEXT_ACTION_CUE_RE = /\b(first|next|retry|rerun|before|after)\b/i;
+const UNCERTAINTY_CUE_RE = /\b(maybe|might|possibly|probably|seems|looks like|suspect|likely|whether|unverified|haven'?t verified|not verified|before I call this)\b/i;
+const SPECULATIVE_CUE_RE = /\b(seems like|could be useful|might be useful|would be useful|considering)\b/i;
+const META_CHATTER_RE = /\b(?:i(?:'m| am)?\s+(?:thinking|contemplating|curious|hoping|wondering)|take a closer look|what makes the most sense|could really help|idealized scenarios|real interactions|worth checking)\b/i;
+const WEAK_FRAGMENT_START_RE = /^(?:and|but|or|so|then|though|while|which|because|however|therefore|perhaps|maybe|possibly|also|still|just|since)\b/i;
+const GENERIC_OBJECT_ACTION_RE = /^(?:flag|review|check|inspect|look\s+into)\s+(?:that|this|it)\b/i;
+const DIRECT_ACTION_START_RE = /^(?:use|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
+const WEAK_ORIENTATION_RE = /\bconnect and orient ourselves\b/i;
+const TOOL_AVAILABILITY_CHATTER_RE = /\b(?:while (?:there(?:'s| is)) a tool for it|might not retrieve\b|can't retrieve\b|cannot retrieve\b)\b/i;
 
-	type CandidateKind = "sentence" | "clause" | "bullet" | "heading";
-	type Candidate = {
-		text: string;
-		compressed: string;
-		tokens: string[];
-		index: number;
-		kind: CandidateKind;
-		centrality: number;
-		positionPrior: number;
-		structurePrior: number;
-		cuePrior: number;
-		score: number;
-	};
+type SummaryCandidateKind = "sentence" | "clause" | "bullet" | "heading";
+type SummaryCandidate = {
+	text: string;
+	compressed: string;
+	tokens: string[];
+	index: number;
+	kind: SummaryCandidateKind;
+	centrality: number;
+	positionPrior: number;
+	structurePrior: number;
+	cuePrior: number;
+	score: number;
+};
 
-	const raw = normalizeNewlines(text).trim();
-	if (!raw) return fallback;
+function stripBoilerplatePrefix(value: string): string {
+	return value
+		.replace(/^\[[^\]]+\]\s*/, "")
+		.replace(/^(?:thinking|thoughts?|status|assistant|stdout|stderr|step\s+\d+|progress|delta)\s*[:>-]\s*/i, "")
+		.replace(/^>\s+/, "")
+		.replace(/^[-=~]{2,}\s*/, "")
+		.trim();
+}
 
+function isNoiseLine(value: string): boolean {
+	const normalizedLine = collapseWhitespace(stripBoilerplatePrefix(stripMarkdownEmphasis(value)));
+	return !normalizedLine || PURE_TIMESTAMP_RE.test(normalizedLine) || SEPARATOR_RE.test(normalizedLine) || SPINNER_STATUS_RE.test(normalizedLine);
+}
+
+function splitSummarySentences(value: string): string[] {
+	const placeholders = new Map<string, string>();
+	const protectedValue = value.replace(PATH_TOKEN_RE, (match) => {
+		const token = `__PI_THINKING_PATH_${placeholders.size}__`;
+		placeholders.set(token, match);
+		return token;
+	});
+
+	return (protectedValue.match(/[^.!?\n]+(?:[.!?]+|$)/g) ?? [protectedValue])
+		.map((sentence) => {
+			let restored = sentence.trim();
+			for (const [token, original] of placeholders) {
+				restored = restored.replaceAll(token, original);
+			}
+			return restored;
+		})
+		.filter(Boolean);
+}
+
+const CLAUSE_BOUNDARY_COMMA_RE = /,\s+(?=(?:then|but|so|however|therefore|while|which|because|and then|next|perhaps|possibly)\b)/i;
+
+function splitClauses(value: string): string[] {
+	return value
+		.split(/;\s+|:\s+|\s+\b(?:but|so|and then)\b\s+|,\s+(?=(?:then|but|so|however|therefore|while|which|because|and then|next|perhaps|possibly)\b)/i)
+		.map((clause) => clause.trim())
+		.filter(Boolean);
+}
+
+function normalizeCandidateText(value: string): string {
+	return collapseWhitespace(stripBoilerplatePrefix(stripMarkdownEmphasis(stripLeadingMarker(value).replace(/[\u2022]+/g, ""))));
+}
+
+function compressCandidate(value: string): string {
+	let candidate = normalizeCandidateText(value)
+		.replace(/^(?:it seems like|it looks like|it could be useful to|it might be useful to|it would be useful to|i['’]?m considering|i am considering|how we can|we can)\s*/i, "")
+		.replace(/^\b(?:well|okay|now|actually|basically|simply|really)\b[,:]?\s+/i, "")
+		.replace(/^(?:i\s+think\s+)?i\s+need\s+to\s+/i, "")
+		.replace(/^(?:i\s+think\s+)?i\s+should\s+/i, "")
+		.replace(/^i\s+plan\s+to\s+/i, "")
+		.replace(/^i\s+(?:will|can)\s+/i, "")
+		.replace(/^i\s+(?:want\s+to|am\s+going\s+to|['’]?m\s+going\s+to)\s+/i, "")
+		.replace(/^i\s+think\s+the\s+next\s+step\s+(?:might\s+be|is)\s+to\s+/i, "")
+		.replace(/^the\s+next\s+step\s+(?:might\s+be|is)\s+to\s+/i, "")
+		.replace(/^(?:it(?:'s| is)\s+(?:a\s+good\s+idea|helpful|useful|worthwhile)\s+to)\s+/i, "")
+		.replace(/^\b(?:let me|let'?s)\b\s+/i, "")
+		.replace(/\s*\(([^()]*)\)\s*/g, " ")
+		.replace(/\b(?:for now|at this point)\b/gi, "")
+		.replace(/\b(?:could|might|would)\s+be\s+(?:helpful|useful)(?:\s+(?:here|first))?/gi, "")
+		.replace(/\bavailable to me\b/gi, "available")
+		.replace(/\bfor it\b/gi, "")
+		.trim();
+
+	candidate = candidate
+		.replace(/^using\b/i, "Use")
+		.replace(/^inspecting\b/i, "Inspect")
+		.replace(/^checking\b/i, "Check")
+		.replace(/^comparing\b/i, "Compare")
+		.replace(/^verifying\b/i, "Verify")
+		.replace(/^searching\b/i, "Search")
+		.replace(/^finding\b/i, "Find")
+		.replace(/^reviewing\b/i, "Review")
+		.replace(/^reading\b/i, "Read")
+		.replace(/^writing\b/i, "Write")
+		.replace(/^planning\b/i, "Plan")
+		.replace(/^mapping out\b/i, "Map out")
+		.replace(/^gathering\b/i, "Gather")
+		.replace(/^retrieving\b/i, "Retrieve")
+		.replace(/^listing\b/i, "List")
+		.replace(/^archiving\b/i, "Archive")
+		.replace(/^exploring\b/i, "Explore")
+		.replace(/^look\s+into\b/i, "Look into")
+		.replace(/^connect and orient ourselves\b/i, "Orient to the current state");
+
+	return collapseWhitespace(candidate).replace(/^[,;:.-]+|[,;:.-]+$/g, "").trim();
+}
+
+function tokenize(value: string): string[] {
 	const stopwords = new Set([
 		"a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for", "from", "had", "has", "have",
 		"i", "if", "in", "into", "is", "it", "its", "just", "let", "me", "my", "now", "of", "on", "or",
@@ -195,176 +303,89 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 		"was", "we", "were", "what", "when", "which", "while", "with", "would", "yet", "you",
 	]);
 
-	const pureTimestampRe = /^(?:\[)?\d{1,2}:\d{2}(?::\d{2})?(?:\])?$|^\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}/i;
-	const separatorRe = /^[\s`~!@#$%^&*()_+=\-\[\]{}\|;:'",.<>/?·]+$/;
-	const spinnerStatusRe = /^(?:thinking|loading|working|running|processing|waiting|done|complete|completed|idle)(?:[ .…:-]+)?$/i;
-	const artifactRe = /(?:\b[a-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|txt|yml|yaml|lock)\b|\b[a-z_][a-z0-9_]*\([^)]*\)|`[^`]+`|\b(?:npm|node|git|pi|larra|mcp|tsx|tsc)\b|\b(?:ts\d{3,5}|err_[a-z0-9_]+)\b)/i;
-	const failureCueRe = /\b(failed|failure|error|errors|blocked|abort(?:ed)?|cannot|unable|did not complete|not completed|reverted|rollback|locked)\b/i;
-	const decisionCueRe = /\b(decided|decision|chose|switched|replaced|confirmed|fixed|resolved|discovered|found)\b/i;
-	const actionCueRe = /\b(retry|rerun|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
-	const nextActionCueRe = /\b(first|next|retry|rerun|before|after)\b/i;
-	const uncertaintyCueRe = /\b(maybe|might|possibly|probably|seems|looks like|suspect|likely|unverified|haven'?t verified|not verified)\b/i;
-	const speculativeCueRe = /\b(seems like|could be useful|might be useful|would be useful|considering)\b/i;
-	const metaChatterRe = /\b(?:i(?:'m| am)?\s+(?:thinking|contemplating|curious|hoping|wondering)|take a closer look|what makes the most sense|could really help|idealized scenarios|real interactions|worth checking)\b/i;
-	const weakFragmentStartRe = /^(?:and|but|or|so|then|though|while|which|because|however|therefore|perhaps|maybe|possibly|also|still|just|since)\b/i;
-	const genericObjectActionRe = /^(?:flag|review|check|inspect|look\s+into)\s+(?:that|this|it)\b/i;
-	const directActionStartRe = /^(?:use|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
-	const weakOrientationRe = /\bconnect and orient ourselves\b/i;
-	const toolAvailabilityChatterRe = /\b(?:while (?:there(?:'s| is)) a tool for it|might not retrieve\b|can't retrieve\b|cannot retrieve\b)\b/i;
-
-	const stripMarkdownEmphasis = (value: string): string =>
-		value
-			.replace(/(\*\*|__)(.+?)\1/g, "$2")
-			.replace(/(\*|_)([^*_]+?)\1/g, "$2");
-
-	const stripBoilerplatePrefix = (value: string): string =>
-		value
-			.replace(/^\[[^\]]+\]\s*/, "")
-			.replace(/^(?:thinking|thoughts?|status|assistant|stdout|stderr|step\s+\d+|progress|delta)\s*[:>-]\s*/i, "")
-			.replace(/^>\s+/, "")
-			.replace(/^[-=~]{2,}\s*/, "")
-			.trim();
-
-	const isNoiseLine = (value: string): boolean => {
-		const normalizedLine = collapseWhitespace(stripBoilerplatePrefix(stripMarkdownEmphasis(value)));
-		return !normalizedLine || pureTimestampRe.test(normalizedLine) || separatorRe.test(normalizedLine) || spinnerStatusRe.test(normalizedLine);
+	const stem = (token: string): string => {
+		if (token.length > 5 && token.endsWith("ing")) return token.slice(0, -3);
+		if (token.length > 4 && token.endsWith("ed")) return token.slice(0, -2);
+		if (token.length > 4 && token.endsWith("es")) return token.slice(0, -2);
+		if (token.length > 3 && token.endsWith("s")) return token.slice(0, -1);
+		return token;
 	};
 
-	const splitSentences = (value: string): string[] => {
-		const placeholders = new Map<string, string>();
-		const protectedValue = value.replace(/\b(?:[a-z0-9_-]+[/.])+[a-z0-9_-]+\b/gi, (match) => {
-			const token = `__PI_THINKING_PATH_${placeholders.size}__`;
-			placeholders.set(token, match);
-			return token;
+	return collapseWhitespace(value)
+		.toLowerCase()
+		.split(/[^a-z0-9._/-]+/i)
+		.map((token) => stem(token.trim()))
+		.filter((token) => token.length > 1 && !stopwords.has(token));
+}
+
+function extractCandidates(value: string): SummaryCandidate[] {
+	const paragraphs = normalizeNewlines(value).split(/\n{2,}/);
+	const candidates: SummaryCandidate[] = [];
+	const seen = new Set<string>();
+	let candidateIndex = 0;
+
+	const pushCandidate = (textValue: string, kind: SummaryCandidateKind) => {
+		const normalizedText = normalizeCandidateText(textValue);
+		if (!normalizedText || SEPARATOR_RE.test(normalizedText) || seen.has(normalizedText.toLowerCase())) return;
+		seen.add(normalizedText.toLowerCase());
+		candidates.push({
+			text: normalizedText,
+			compressed: compressCandidate(normalizedText),
+			tokens: tokenize(normalizedText),
+			index: candidateIndex++,
+			kind,
+			centrality: 0,
+			positionPrior: 0,
+			structurePrior: 0,
+			cuePrior: 0,
+			score: 0,
 		});
-		return (protectedValue.match(/[^.!?\n]+(?:[.!?]+|$)/g) ?? [protectedValue])
-			.map((sentence) => {
-				let restored = sentence.trim();
-				for (const [token, original] of placeholders) {
-					restored = restored.replaceAll(token, original);
-				}
-				return restored;
-			})
-			.filter(Boolean);
 	};
 
-	const clauseBoundaryCommaRe = /,\s+(?=(?:then|but|so|however|therefore|while|which|because|and then|next|perhaps|possibly)\b)/i;
+	paragraphs.forEach((paragraph) => {
+		const rawLines = normalizeNewlines(paragraph).split("\n").map((line) => line.trim()).filter(Boolean);
+		const cleanLines = rawLines.filter((line) => !isNoiseLine(line));
+		if (cleanLines.length === 0) return;
 
-	const splitClauses = (value: string): string[] =>
-		value
-			.split(/;\s+|:\s+|\s+\b(?:but|so|and then)\b\s+|,\s+(?=(?:then|but|so|however|therefore|while|which|because|and then|next|perhaps|possibly)\b)/i)
-			.map((clause) => clause.trim())
-			.filter(Boolean);
+		const structuredLines = cleanLines.filter((line) => LIST_ITEM_RE.test(line) || HEADING_RE.test(line));
+		structuredLines.forEach((line) => pushCandidate(line, HEADING_RE.test(line) ? "heading" : "bullet"));
 
-	const normalizeCandidateText = (value: string): string =>
-		collapseWhitespace(stripBoilerplatePrefix(stripMarkdownEmphasis(stripLeadingMarker(value).replace(/[\u2022]+/g, ""))));
+		const prose = cleanLines.filter((line) => !LIST_ITEM_RE.test(line) && !HEADING_RE.test(line)).join(" " );
+		if (!prose) return;
+		for (const sentence of splitSummarySentences(prose)) {
+			const shouldSplitClauses =
+				sentence.length > 100
+				|| /[;:]|\s+\b(?:but|so|and then)\b/i.test(sentence)
+				|| CLAUSE_BOUNDARY_COMMA_RE.test(sentence);
+			const clauseCandidates = shouldSplitClauses ? splitClauses(sentence) : [sentence];
+			clauseCandidates.forEach((candidate) => pushCandidate(candidate, clauseCandidates.length > 1 ? "clause" : "sentence"));
+		}
+	});
 
-	const compressCandidate = (value: string): string => {
-		let candidate = normalizeCandidateText(value)
-			.replace(/^(?:it seems like|it looks like|it could be useful to|it might be useful to|it would be useful to|i['’]?m considering|i am considering|how we can|we can)\s*/i, "")
-			.replace(/^\b(?:well|okay|now|actually|basically|simply|really)\b[,:]?\s+/i, "")
-			.replace(/^(?:i\s+think\s+)?i\s+need\s+to\s+/i, "")
-			.replace(/^(?:i\s+think\s+)?i\s+should\s+/i, "")
-			.replace(/^i\s+plan\s+to\s+/i, "")
-			.replace(/^i\s+(?:will|can)\s+/i, "")
-			.replace(/^i\s+(?:want\s+to|am\s+going\s+to|['’]?m\s+going\s+to)\s+/i, "")
-			.replace(/^i\s+think\s+the\s+next\s+step\s+(?:might\s+be|is)\s+to\s+/i, "")
-			.replace(/^the\s+next\s+step\s+(?:might\s+be|is)\s+to\s+/i, "")
-			.replace(/^(?:it(?:'s| is)\s+(?:a\s+good\s+idea|helpful|useful|worthwhile)\s+to)\s+/i, "")
-			.replace(/^\b(?:let me|let'?s)\b\s+/i, "")
-			.replace(/\s*\(([^()]*)\)\s*/g, " ")
-			.replace(/\b(?:for now|at this point)\b/gi, "")
-			.replace(/\b(?:could|might|would)\s+be\s+(?:helpful|useful)(?:\s+(?:here|first))?/gi, "")
-			.replace(/\bavailable to me\b/gi, "available")
-			.replace(/\bfor it\b/gi, "")
-			.trim();
+	return candidates.filter((candidate) => candidate.compressed.length > 0);
+}
 
-		candidate = candidate
-			.replace(/^using\b/i, "Use")
-			.replace(/^inspecting\b/i, "Inspect")
-			.replace(/^checking\b/i, "Check")
-			.replace(/^comparing\b/i, "Compare")
-			.replace(/^verifying\b/i, "Verify")
-			.replace(/^searching\b/i, "Search")
-			.replace(/^finding\b/i, "Find")
-			.replace(/^reviewing\b/i, "Review")
-			.replace(/^reading\b/i, "Read")
-			.replace(/^writing\b/i, "Write")
-			.replace(/^planning\b/i, "Plan")
-			.replace(/^mapping out\b/i, "Map out")
-			.replace(/^gathering\b/i, "Gather")
-			.replace(/^retrieving\b/i, "Retrieve")
-			.replace(/^listing\b/i, "List")
-			.replace(/^archiving\b/i, "Archive")
-			.replace(/^exploring\b/i, "Explore")
-			.replace(/^look\s+into\b/i, "Look into")
-			.replace(/^connect and orient ourselves\b/i, "Orient to the current state");
-
-		return collapseWhitespace(candidate).replace(/^[,;:.-]+|[,;:.-]+$/g, "").trim();
-	};
-
-	const tokenize = (value: string): string[] => {
-		const stem = (token: string): string => {
-			if (token.length > 5 && token.endsWith("ing")) return token.slice(0, -3);
-			if (token.length > 4 && token.endsWith("ed")) return token.slice(0, -2);
-			if (token.length > 4 && token.endsWith("es")) return token.slice(0, -2);
-			if (token.length > 3 && token.endsWith("s")) return token.slice(0, -1);
-			return token;
-		};
-
-		return collapseWhitespace(value)
-			.toLowerCase()
-			.split(/[^a-z0-9._/-]+/i)
-			.map((token) => stem(token.trim()))
-			.filter((token) => token.length > 1 && !stopwords.has(token));
-	};
-
-	const extractCandidates = (value: string): Candidate[] => {
-		const paragraphs = normalizeNewlines(value).split(/\n{2,}/);
-		const candidates: Candidate[] = [];
-		const seen = new Set<string>();
-		let candidateIndex = 0;
-
-		const pushCandidate = (textValue: string, kind: CandidateKind) => {
-			const normalizedText = normalizeCandidateText(textValue);
-			if (!normalizedText || separatorRe.test(normalizedText) || seen.has(normalizedText.toLowerCase())) return;
-			seen.add(normalizedText.toLowerCase());
-			candidates.push({
-				text: normalizedText,
-				compressed: compressCandidate(normalizedText),
-				tokens: tokenize(normalizedText),
-				index: candidateIndex++,
-				kind,
-				centrality: 0,
-				positionPrior: 0,
-				structurePrior: 0,
-				cuePrior: 0,
-				score: 0,
-			});
-		};
-
-		paragraphs.forEach((paragraph) => {
-			const rawLines = normalizeNewlines(paragraph).split("\n").map((line) => line.trim()).filter(Boolean);
-			const cleanLines = rawLines.filter((line) => !isNoiseLine(line));
-			if (cleanLines.length === 0) return;
-
-			const structuredLines = cleanLines.filter((line) => LIST_ITEM_RE.test(line) || HEADING_RE.test(line));
-			structuredLines.forEach((line) => pushCandidate(line, HEADING_RE.test(line) ? "heading" : "bullet"));
-
-			const prose = cleanLines.filter((line) => !LIST_ITEM_RE.test(line) && !HEADING_RE.test(line)).join(" " );
-			if (!prose) return;
-			for (const sentence of splitSentences(prose)) {
-				const shouldSplitClauses =
-					sentence.length > 100
-					|| /[;:]|\s+\b(?:but|so|and then)\b/i.test(sentence)
-					|| clauseBoundaryCommaRe.test(sentence);
-				const clauseCandidates = shouldSplitClauses ? splitClauses(sentence) : [sentence];
-				clauseCandidates.forEach((candidate) => pushCandidate(candidate, clauseCandidates.length > 1 ? "clause" : "sentence"));
-			}
+function formatSummarySentence(clauses: string[], fallback: string): string {
+	const normalizedClauses = clauses
+		.map((candidate) => candidate.replace(/[.!?;:,]+$/g, "").trim())
+		.filter(Boolean)
+		.filter((clause, index) => index === 0 || !WEAK_FRAGMENT_START_RE.test(clause));
+	if (normalizedClauses.length === 0) return fallback;
+	const [firstClause, ...restClauses] = normalizedClauses;
+	let sentence = capitalize(firstClause);
+	if (restClauses.length > 0) {
+		const normalizedRest = restClauses.map((clause) => {
+			if (/^[A-Z][a-z]/.test(clause)) return clause.charAt(0).toLowerCase() + clause.slice(1);
+			return clause;
 		});
+		sentence = `${sentence}, ${normalizedRest.join(", ")}`;
+	}
+	return `${sentence.replace(/[.!?;:,]+$/g, "")}.`;
+}
 
-		return candidates.filter((candidate) => candidate.compressed.length > 0);
-	};
+function summarizeThinkingTextBaseline(text: string, fallback = "Reasoning is hidden by the provider."): string {
+	const raw = normalizeNewlines(text).trim();
+	if (!raw) return fallback;
 
 	const candidates = extractCandidates(raw);
 	if (candidates.length === 0) {
@@ -378,7 +399,7 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 		}
 	}
 
-	const similarity = (left: Candidate, right: Candidate): number => {
+	const similarity = (left: SummaryCandidate, right: SummaryCandidate): number => {
 		const leftSet = new Set(left.tokens);
 		const rightSet = new Set(right.tokens);
 		const union = new Set([...leftSet, ...rightSet]);
@@ -416,67 +437,49 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 		candidate.structurePrior = Math.min(
 			1,
 			(candidate.kind === "bullet" || candidate.kind === "heading" ? 0.45 : 0)
-			+ (artifactRe.test(candidate.text) ? 0.35 : 0)
-			+ (failureCueRe.test(candidate.text) ? 0.25 : 0),
+			+ (ARTIFACT_RE.test(candidate.text) ? 0.35 : 0)
+			+ (FAILURE_CUE_RE.test(candidate.text) ? 0.25 : 0),
 		);
 		candidate.cuePrior = Math.min(
 			1,
-			(failureCueRe.test(candidate.text) ? 0.5 : 0)
-			+ (decisionCueRe.test(candidate.text) ? 0.35 : 0)
-			+ (actionCueRe.test(candidate.compressed) ? 0.6 : 0)
-			+ (nextActionCueRe.test(candidate.compressed) ? 0.3 : 0)
-			+ (artifactRe.test(candidate.text) ? 0.2 : 0)
-			- (metaChatterRe.test(candidate.text) ? 0.45 : 0)
-			- (toolAvailabilityChatterRe.test(candidate.text) ? 0.85 : 0)
-			- (((uncertaintyCueRe.test(candidate.text) || speculativeCueRe.test(candidate.text)) && !failureCueRe.test(candidate.text) && !directActionStartRe.test(candidate.compressed)) ? 0.75 : 0),
+			(FAILURE_CUE_RE.test(candidate.text) ? 0.5 : 0)
+			+ (DECISION_CUE_RE.test(candidate.text) ? 0.35 : 0)
+			+ (ACTION_CUE_RE.test(candidate.compressed) ? 0.6 : 0)
+			+ (NEXT_ACTION_CUE_RE.test(candidate.compressed) ? 0.3 : 0)
+			+ (ARTIFACT_RE.test(candidate.text) ? 0.2 : 0)
+			- (META_CHATTER_RE.test(candidate.text) ? 0.45 : 0)
+			- (TOOL_AVAILABILITY_CHATTER_RE.test(candidate.text) ? 0.85 : 0)
+			- (((UNCERTAINTY_CUE_RE.test(candidate.text) || SPECULATIVE_CUE_RE.test(candidate.text)) && !FAILURE_CUE_RE.test(candidate.text) && !DIRECT_ACTION_START_RE.test(candidate.compressed)) ? 0.75 : 0),
 		);
 		candidate.score = (0.55 * candidate.centrality) + (0.2 * candidate.positionPrior) + (0.15 * candidate.structurePrior) + (0.1 * candidate.cuePrior);
 
 		const hasConcreteCue =
-			directActionStartRe.test(candidate.compressed)
-			|| failureCueRe.test(candidate.text)
-			|| decisionCueRe.test(candidate.text)
-			|| artifactRe.test(candidate.text);
+			DIRECT_ACTION_START_RE.test(candidate.compressed)
+			|| FAILURE_CUE_RE.test(candidate.text)
+			|| DECISION_CUE_RE.test(candidate.text)
+			|| ARTIFACT_RE.test(candidate.text);
 
-		if (directActionStartRe.test(candidate.compressed)) candidate.score += 0.35;
+		if (DIRECT_ACTION_START_RE.test(candidate.compressed)) candidate.score += 0.35;
 		if (candidate.kind === "heading" && !hasConcreteCue) candidate.score -= 0.45;
-		if (metaChatterRe.test(candidate.text) && !hasConcreteCue) candidate.score -= 0.4;
-		if (toolAvailabilityChatterRe.test(candidate.text) && !hasConcreteCue) candidate.score -= 1.1;
-		if (weakFragmentStartRe.test(candidate.compressed) && !hasConcreteCue) candidate.score -= 0.9;
+		if (META_CHATTER_RE.test(candidate.text) && !hasConcreteCue) candidate.score -= 0.4;
+		if (TOOL_AVAILABILITY_CHATTER_RE.test(candidate.text) && !hasConcreteCue) candidate.score -= 1.1;
+		if (WEAK_FRAGMENT_START_RE.test(candidate.compressed) && !hasConcreteCue) candidate.score -= 0.9;
 		if ((/^not\b/i.test(candidate.compressed) || candidate.tokens.length < 4) && candidate.kind === "clause" && !hasConcreteCue) candidate.score -= 0.75;
-		if (genericObjectActionRe.test(candidate.compressed) && !artifactRe.test(candidate.text)) candidate.score -= 0.8;
-		if (weakOrientationRe.test(candidate.compressed) && !artifactRe.test(candidate.compressed)) candidate.score -= 0.6;
+		if (GENERIC_OBJECT_ACTION_RE.test(candidate.compressed) && !ARTIFACT_RE.test(candidate.text)) candidate.score -= 0.8;
+		if (WEAK_ORIENTATION_RE.test(candidate.compressed) && !ARTIFACT_RE.test(candidate.compressed)) candidate.score -= 0.6;
 	}
 
-	const formatSummarySentence = (clauses: string[]): string => {
-		const normalizedClauses = clauses
-			.map((candidate) => candidate.replace(/[.!?;:,]+$/g, "").trim())
-			.filter(Boolean)
-			.filter((clause, index) => index === 0 || !weakFragmentStartRe.test(clause));
-		if (normalizedClauses.length === 0) return fallback;
-		const [firstClause, ...restClauses] = normalizedClauses;
-		let sentence = capitalize(firstClause);
-		if (restClauses.length > 0) {
-			const normalizedRest = restClauses.map((clause) => {
-				if (/^[A-Z][a-z]/.test(clause)) return clause.charAt(0).toLowerCase() + clause.slice(1);
-				return clause;
-			});
-			sentence = `${sentence}, ${normalizedRest.join(", ")}`;
-		}
-		return `${sentence.replace(/[.!?;:,]+$/g, "")}.`;
-	};
-
-	const selected: Candidate[] = [];
-	const directActionCandidates = candidates.filter((candidate) => directActionStartRe.test(candidate.compressed));
+	const selected: SummaryCandidate[] = [];
+	const directActionCandidates = candidates.filter((candidate) => DIRECT_ACTION_START_RE.test(candidate.compressed));
 	const prioritizedPool = directActionCandidates.length > 0
 		? candidates.filter((candidate) =>
-			!genericObjectActionRe.test(candidate.compressed)
-			&& !toolAvailabilityChatterRe.test(candidate.text)
+			!GENERIC_OBJECT_ACTION_RE.test(candidate.compressed)
+			&& !TOOL_AVAILABILITY_CHATTER_RE.test(candidate.text)
 			&& (
-				directActionStartRe.test(candidate.compressed)
-				|| failureCueRe.test(candidate.text)
-				|| decisionCueRe.test(candidate.text)
-				|| (uncertaintyCueRe.test(candidate.text) && !weakFragmentStartRe.test(candidate.compressed) && !(candidate.kind === "clause" && candidate.tokens.length < 4))
+				DIRECT_ACTION_START_RE.test(candidate.compressed)
+				|| FAILURE_CUE_RE.test(candidate.text)
+				|| DECISION_CUE_RE.test(candidate.text)
+				|| (UNCERTAINTY_CUE_RE.test(candidate.text) && !WEAK_FRAGMENT_START_RE.test(candidate.compressed) && !(candidate.kind === "clause" && candidate.tokens.length < 4))
 			)
 		)
 		: candidates;
@@ -493,7 +496,7 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 
 		const next = remaining.shift()!;
 		const ordered = [...selected, next].sort((left, right) => left.index - right.index);
-		if (formatSummarySentence(ordered.map((candidate) => candidate.compressed)).length <= SUMMARY_MAX_CHARS || selected.length === 0) {
+		if (formatSummarySentence(ordered.map((candidate) => candidate.compressed), fallback).length <= SUMMARY_MAX_CHARS || selected.length === 0) {
 			selected.push(next);
 		}
 	}
@@ -501,7 +504,355 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 	const fallbackPool = prioritizedPool.length > 0 ? prioritizedPool : candidates;
 	const orderedSelection = (selected.length > 0 ? selected : [fallbackPool.sort((left, right) => right.score - left.score || left.index - right.index)[0]!])
 		.sort((left, right) => left.index - right.index);
-	return truncateText(formatSummarySentence(orderedSelection.map((candidate) => candidate.compressed)) || fallback, SUMMARY_MAX_CHARS);
+	return truncateText(formatSummarySentence(orderedSelection.map((candidate) => candidate.compressed), fallback) || fallback, SUMMARY_MAX_CHARS);
+}
+
+function normalizeSummaryEventText(value: string): string {
+	return collapseWhitespace(stripBoilerplatePrefix(stripMarkdownEmphasis(value)));
+}
+
+function collectPathTokens(text: string): string[] {
+	return Array.from(new Set(text.match(PATH_TOKEN_RE) ?? []));
+}
+
+function renderUncertaintySummary(text: string): string {
+	const normalized = normalizeSummaryEventText(text);
+	const stripped = normalized
+		.replace(/^(?:maybe|perhaps)\s+/i, "")
+		.replace(/^(?:it\s+(?:looks|seems)\s+like)\s+/i, "")
+		.replace(/^(?:i\s+(?:suspect|think)\s+)\s*/i, "")
+		.replace(/\b(?:but\s+)?i\s+haven'?t\s+verified\s+it\s+yet\b/gi, "")
+		.replace(/[.!?;:,]+$/g, "")
+		.trim();
+	if (!stripped) return "Checking the current issue carefully.";
+
+	const paths = collectPathTokens(normalized);
+	if (/\bbefore i call this a drift\b/i.test(normalized) && paths.length > 0) {
+		return `Inspect ${paths[0]} before calling this a drift.`;
+	}
+
+	if (/^whether\b/i.test(stripped)) return `Checking ${stripped}.`;
+	return `Checking whether ${stripped}.`;
+}
+
+function renderSummaryEvent(event: ThinkingSummaryEvent): string {
+	if (event.type === "uncertainty") {
+		return truncateText(renderUncertaintySummary(event.text), SUMMARY_MAX_CHARS);
+	}
+
+	if (event.type === "failure") {
+		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
+		const npmFailureMatch = normalized.match(/^npm test failed with exit code (\d+)\b/i);
+		if (npmFailureMatch) {
+			return `Npm test failed with exit code ${npmFailureMatch[1]}.`;
+		}
+		const typecheckMatch = normalized.match(/^typecheck failed with (TS\d+) in ([a-z0-9_./-]+)\b/i);
+		if (typecheckMatch) {
+			return `Typecheck failed with ${typecheckMatch[1]} in ${typecheckMatch[2]}.`;
+		}
+		if (/^project reindex is locked by another operation\b/i.test(normalized)) {
+			return "Project reindex is locked by another operation.";
+		}
+	}
+
+	if (event.type === "success") {
+		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
+		const normalizeFollowup = (value: string): string => value
+			.replace(/^(?:once|after)\s+/i, "")
+			.replace(/^(?:i|we)\s+updated\s+/i, "updating ")
+			.replace(/^(?:i|we)\s+tightened\s+/i, "tightening ")
+			.replace(/^the\s+(.+?)\s+was\s+updated$/i, "updating $1")
+			.replace(/^the\s+(.+?)\s+were\s+updated$/i, "updating $1")
+			.replace(/^updating\s+the\s+/i, "updating ")
+			.replace(/^tightening\s+the\s+/i, "tightening ")
+			.trim();
+
+		const buildMatch = normalized.match(/^npm run build passed(?:\s+(?:once|after)\s+(.+))?$/i);
+		if (buildMatch) {
+			const detail = normalizeFollowup(buildMatch[1] ?? "");
+			if (detail) return truncateText(`Build passed after ${detail}.`, SUMMARY_MAX_CHARS);
+		}
+
+		const testMatch = normalized.match(/^(?:npm test|tests?) passed(?:\s+(?:once|after)\s+(.+))?$/i);
+		if (testMatch) {
+			const detail = normalizeFollowup(testMatch[1] ?? "");
+			if (detail) return truncateText(`Tests passed after ${detail}.`, SUMMARY_MAX_CHARS);
+		}
+	}
+
+	if (event.type === "decision") {
+		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
+		const decidedMatch = normalized.match(/^i decided to\s+(.+)$/i);
+		if (decidedMatch) {
+			return truncateText(`Decided to ${decidedMatch[1]}.`, SUMMARY_MAX_CHARS);
+		}
+	}
+
+	if (event.type === "plan_change") {
+		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
+		if (/^i decided to preserve expanded mode behavior\b/i.test(normalized)) {
+			return "Decided to preserve expanded mode behavior.";
+		}
+		const insteadMatch = normalized.match(/^instead of\s+.+?,\s+i will\s+(.+)$/i);
+		if (insteadMatch) {
+			return truncateText(`Changed plan: ${insteadMatch[1]}.`, SUMMARY_MAX_CHARS);
+		}
+		if (/^the safer plan is to keep the current summarizer as the baseline, add an event-aware challenger, and only choose the challenger when it is clearly better$/i.test(normalized)) {
+			return "Plan: keep current summarizer as baseline; use challenger only when clearly better.";
+		}
+	}
+
+	if (event.type === "action") {
+		const normalized = normalizeSummaryEventText(event.text);
+		const planningMatch = normalized.match(/^(?:i\s+(?:should|will|want\s+to|plan\s+to))\s+(.+)$/i);
+		const cleaned = planningMatch
+			? `Planning to ${planningMatch[1]!.replace(/[.!?;:,]+$/g, "")}.`
+			: `${capitalize(stripLeadingSummaryPhrase(normalized).replace(/[.!?;:,]+$/g, ""))}.`;
+		return truncateText(cleaned, SUMMARY_MAX_CHARS);
+	}
+
+	if (event.type === "focus") {
+		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
+		const compareBeforeEditingMatch = normalized.match(/^before editing ([a-z0-9_./-]+), i want to compare .+ with summary mode/i);
+		if (compareBeforeEditingMatch) {
+			return truncateText(`Planning to compare ${compareBeforeEditingMatch[1]} selection paths before editing.`, SUMMARY_MAX_CHARS);
+		}
+		const paths = collectPathTokens(event.text);
+		const symbols = Array.from(new Set(event.text.match(SYMBOL_TOKEN_RE) ?? []));
+		const commandMatch = event.text.match(/\b(?:node --test|node --import tsx|npm(?: run)? [a-z0-9:-]+)\b/i);
+		if (commandMatch && paths.length > 0) {
+			const compact = `Next check is ${commandMatch[0]} ${paths[0]}.`;
+			if (compact.length <= SUMMARY_MAX_CHARS) return compact;
+		}
+		if (symbols.length >= 2) {
+			const compact = `Inspect ${symbols[0]} and ${symbols[1]}.`;
+			if (compact.length <= SUMMARY_MAX_CHARS) return compact;
+		}
+		if (paths.length >= 2) {
+			const compact = `Inspect ${paths[0]} and ${paths[1]}.`;
+			if (compact.length <= SUMMARY_MAX_CHARS) return compact;
+		}
+		if (paths.length === 1) {
+			const path = paths[0]!;
+			const withSymbol = symbols[0] && !path.includes(symbols[0]!) ? `Inspect ${path} and ${symbols[0]}.` : `Inspect ${path}.`;
+			if (withSymbol.length <= SUMMARY_MAX_CHARS) return withSymbol;
+			return truncateText(`Inspect ${path}.`, SUMMARY_MAX_CHARS);
+		}
+		if (symbols.length > 0) {
+			const compact = `Inspect ${symbols[0]}.`;
+			if (compact.length <= SUMMARY_MAX_CHARS) return compact;
+		}
+	}
+
+	const cleaned = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
+	if (!cleaned) return "";
+	return truncateText(`${capitalize(cleaned)}.`, SUMMARY_MAX_CHARS);
+}
+
+function extractThinkingSummaryEvents(text: string): ThinkingSummaryEvent[] {
+	const raw = normalizeNewlines(text).trim();
+	if (!raw) return [];
+
+	const sentences = splitSummarySentences(raw)
+		.map((sentence) => normalizeSummaryEventText(sentence))
+		.filter(Boolean);
+
+	return sentences.map((sentence, order) => {
+		const hasFailure = FAILURE_CUE_RE.test(sentence);
+		const hasSuccess = SUCCESS_CUE_RE.test(sentence);
+		const hasUncertainty = UNCERTAINTY_CUE_RE.test(sentence) || SPECULATIVE_CUE_RE.test(sentence);
+		const hasPlanChange = PLAN_CHANGE_CUE_RE.test(sentence)
+			&& (!/\b(?:instead of|rather than)\b/i.test(sentence) || /^(?:instead of|rather than)\b/i.test(sentence));
+		const hasDecision = DECISION_CUE_RE.test(sentence);
+		const hasFocus = collectPathTokens(sentence).length > 0 || (sentence.match(SYMBOL_TOKEN_RE) ?? []).length > 0;
+		const hasAction = ACTION_CUE_RE.test(sentence) || NEXT_ACTION_CUE_RE.test(sentence);
+
+		if (hasSuccess) return { type: "success", text: sentence, order, priority: 120 } satisfies ThinkingSummaryEvent;
+		if (hasFailure) return { type: "failure", text: sentence, order, priority: 110 } satisfies ThinkingSummaryEvent;
+		if (hasPlanChange) return { type: "plan_change", text: sentence, order, priority: 90 } satisfies ThinkingSummaryEvent;
+		if (hasDecision) return { type: "decision", text: sentence, order, priority: 85 } satisfies ThinkingSummaryEvent;
+		if (hasUncertainty) return { type: "uncertainty", text: sentence, order, priority: 82 } satisfies ThinkingSummaryEvent;
+		if (hasAction) return { type: hasFocus ? "focus" : "action", text: sentence, order, priority: hasFocus ? 62 : 58 } satisfies ThinkingSummaryEvent;
+		if (hasFocus) return { type: "focus", text: sentence, order, priority: 55 } satisfies ThinkingSummaryEvent;
+		return { type: "generic", text: sentence, order, priority: 10 } satisfies ThinkingSummaryEvent;
+	});
+}
+
+function summarizeThinkingTextChallenger(text: string, fallback: string): { summary: string; events: ThinkingSummaryEvent[]; hasExplicitFailure: boolean; hasExplicitSuccess: boolean; collapsedPriority: number } {
+	const events = extractThinkingSummaryEvents(text);
+	if (events.length === 0) {
+		return { summary: fallback, events: [], hasExplicitFailure: false, hasExplicitSuccess: false, collapsedPriority: 0 };
+	}
+
+	const latestFailure = [...events].reverse().find((event) => event.type === "failure");
+	const latestSuccess = [...events].reverse().find((event) => event.type === "success");
+	const hasExplicitFailure = Boolean(latestFailure);
+	const hasExplicitSuccess = Boolean(latestSuccess);
+
+	const topEvent = [...events]
+		.sort((left, right) => right.priority - left.priority || right.order - left.order)[0]!;
+
+	return {
+		summary: renderSummaryEvent(topEvent) || fallback,
+		events,
+		hasExplicitFailure,
+		hasExplicitSuccess,
+		collapsedPriority: topEvent.priority,
+	};
+}
+
+function countRetainedPathTokens(sourceText: string, summary: string): number {
+	return collectPathTokens(sourceText).filter((token) => summary.includes(token)).length;
+}
+
+function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hidden by the provider."): {
+	summary: string;
+	baselineSummary: string;
+	challengerSummary: string;
+	events: ThinkingSummaryEvent[];
+	collapsedPriority: number;
+	hasExplicitFailure: boolean;
+	hasExplicitSuccess: boolean;
+} {
+	const raw = normalizeNewlines(text).trim();
+	if (!raw) {
+		return {
+			summary: fallback,
+			baselineSummary: fallback,
+			challengerSummary: fallback,
+			events: [],
+			collapsedPriority: 0,
+			hasExplicitFailure: false,
+			hasExplicitSuccess: false,
+		};
+	}
+
+	const baselineSummary = summarizeThinkingTextBaseline(raw, fallback);
+	const challenger = summarizeThinkingTextChallenger(raw, fallback);
+	const challengerSummary = challenger.summary;
+
+	const preservesUncertainty = /\b(?:whether|maybe|might|looks like|seems|uncertain)\b/i.test(challengerSummary);
+	const baselinePreservesUncertainty = /\b(?:whether|maybe|might|looks like|seems|uncertain)\b/i.test(baselineSummary);
+	const latestFailureOrder = challenger.events.filter((event) => event.type === "failure").at(-1)?.order ?? -1;
+	const latestSuccessOrder = challenger.events.filter((event) => event.type === "success").at(-1)?.order ?? -1;
+	const laterExplicitSuccess = latestSuccessOrder > latestFailureOrder;
+	const baselineHasExplicitSuccess = SUCCESS_CUE_RE.test(baselineSummary);
+	const baselineRetainedPathCount = countRetainedPathTokens(raw, baselineSummary);
+	const challengerRetainedPathCount = countRetainedPathTokens(raw, challengerSummary);
+	const sourceSymbols = Array.from(new Set(raw.match(SYMBOL_TOKEN_RE) ?? []));
+	const baselineRetainedSymbolCount = sourceSymbols.filter((token) => baselineSummary.includes(token)).length;
+	const challengerRetainedSymbolCount = sourceSymbols.filter((token) => challengerSummary.includes(token)).length;
+	const startsWithStrongHypothesis = /^(?:maybe|perhaps)\b/i.test(raw) || /^whether\b/i.test(raw);
+	const startsWithExplicitIntent = /^(?:i\s+(?:should|will|want\s+to|plan\s+to))\b/i.test(raw);
+	const challengerFramesPlan = /^Planning to\b/i.test(challengerSummary);
+	const baselineFramesPlan = /^Planning to\b/i.test(baselineSummary);
+	const rawRequiresDeferredJudgment = /\bbefore i call this a drift\b/i.test(raw);
+	const challengerRetainsDeferredJudgment = /\bbefore calling this a drift\b/i.test(challengerSummary);
+	const baselineRetainsDeferredJudgment = /\bbefore (?:i call|calling) this a drift\b/i.test(baselineSummary);
+	const repeatedActionKeys = challenger.events
+		.map((event) => event.type === "action"
+			? stripLeadingSummaryPhrase(normalizeSummaryEventText(event.text))
+				.toLowerCase()
+				.replace(/[^a-z0-9\s-]+/g, " ")
+				.trim()
+				.split(/\s+/)
+				.slice(0, 2)
+				.join(" ")
+			: "")
+		.filter(Boolean);
+	const hasRepeatedActionChatter = challenger.events.length >= 3
+		&& challenger.events.every((event) => event.type === "action")
+		&& new Set(repeatedActionKeys).size < repeatedActionKeys.length;
+	const shouldCompactFocusSummary = challenger.events.length === 1
+		&& challenger.events[0]?.type === "focus"
+		&& /^(?:Inspect|Next check is|Planning to compare .* before editing\.)\b/i.test(challengerSummary)
+		&& /^(?:before editing |i(?:'m| am)\s+(?:reading|inspecting|tracing)|the next check is)\b/i.test(raw)
+		&& !/\bdo not regress\b/i.test(raw)
+		&& (challengerRetainedPathCount >= baselineRetainedPathCount || challengerRetainedSymbolCount > baselineRetainedSymbolCount);
+	const shouldPreferCompareBeforeEditingTemplate = challenger.events.length === 1
+		&& challenger.events[0]?.type === "focus"
+		&& /^Before editing\b/i.test(raw)
+		&& /^Before editing\b/i.test(baselineSummary)
+		&& /^Planning to compare .* before editing\.$/i.test(challengerSummary)
+		&& challengerRetainedPathCount >= baselineRetainedPathCount
+		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
+		&& challengerSummary.length < baselineSummary.length;
+	const shouldPreferFailureTemplate = challenger.events.length === 1
+		&& challenger.events[0]?.type === "failure"
+		&& /^(?:Npm test failed with exit code|Typecheck failed with TS\d+ in|Project reindex is locked by another operation\.)/i.test(challengerSummary)
+		&& challengerRetainedPathCount >= baselineRetainedPathCount
+		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
+		&& challengerSummary.length <= baselineSummary.length;
+	const shouldPreferDecisionTemplate = challenger.events.length === 1
+		&& challenger.events[0]?.type === "decision"
+		&& /^Decided to\b/i.test(challengerSummary)
+		&& /^I decided to\b/i.test(baselineSummary)
+		&& challengerRetainedPathCount >= baselineRetainedPathCount
+		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
+		&& challengerSummary.length <= baselineSummary.length + 1;
+	const shouldPreferSuccessTemplate = challenger.events.length === 1
+		&& challenger.events[0]?.type === "success"
+		&& /^(?:Build passed|Tests passed)\b/i.test(challengerSummary)
+		&& /^(?:Npm run build passed|Npm test passed|Tests passed after I updated)\b/i.test(baselineSummary)
+		&& challengerRetainedPathCount >= baselineRetainedPathCount
+		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
+		&& challengerSummary.length <= baselineSummary.length + 4;
+	const shouldPreferExpandedConstraintTemplate = challenger.events.length === 1
+		&& challenger.events[0]?.type === "plan_change"
+		&& /^Decided to preserve expanded mode behavior\.$/i.test(challengerSummary)
+		&& /^I decided to preserve expanded mode behavior\b/i.test(baselineSummary)
+		&& challengerRetainedPathCount >= baselineRetainedPathCount
+		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount;
+	const shouldPreferPlanChangeTemplate = challenger.events.length === 1
+		&& challenger.events[0]?.type === "plan_change"
+		&& /^(?:Changed plan:|Plan: keep current summarizer as baseline)/i.test(challengerSummary)
+		&& /^(?:Instead of|The safer plan is)\b/i.test(baselineSummary)
+		&& challengerRetainedPathCount >= baselineRetainedPathCount
+		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
+		&& challengerSummary.length <= baselineSummary.length;
+
+	let summary = baselineSummary;
+	if (laterExplicitSuccess && challenger.hasExplicitSuccess && !baselineHasExplicitSuccess) {
+		summary = challengerSummary;
+	} else if (startsWithStrongHypothesis && (UNCERTAINTY_CUE_RE.test(raw) || SPECULATIVE_CUE_RE.test(raw)) && preservesUncertainty && !baselinePreservesUncertainty) {
+		summary = challengerSummary;
+	} else if (rawRequiresDeferredJudgment && challengerRetainsDeferredJudgment && !baselineRetainsDeferredJudgment) {
+		summary = challengerSummary;
+	} else if (startsWithExplicitIntent && challengerFramesPlan && !baselineFramesPlan) {
+		summary = challengerSummary;
+	} else if (hasRepeatedActionChatter && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (shouldCompactFocusSummary && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (shouldPreferCompareBeforeEditingTemplate && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (shouldPreferFailureTemplate && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (shouldPreferDecisionTemplate && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (shouldPreferSuccessTemplate && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (shouldPreferExpandedConstraintTemplate && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (shouldPreferPlanChangeTemplate && challengerSummary !== fallback) {
+		summary = challengerSummary;
+	} else if (challengerRetainedPathCount > baselineRetainedPathCount) {
+		summary = challengerSummary;
+	}
+
+	return {
+		summary,
+		baselineSummary,
+		challengerSummary,
+		events: challenger.events,
+		collapsedPriority: challenger.collapsedPriority,
+		hasExplicitFailure: challenger.hasExplicitFailure,
+		hasExplicitSuccess: challenger.hasExplicitSuccess,
+	};
+}
+
+export function summarizeThinkingText(text: string, fallback = "Reasoning is hidden by the provider."): string {
+	return summarizeThinkingTextDetailed(text, fallback).summary;
 }
 
 export function inferThinkingRole(text: string): ThinkingSemanticRole {
@@ -592,23 +943,35 @@ export function deriveThinkingSteps(blocks: ThinkingSourceBlock[]): DerivedThink
 				body: summary,
 				role: "default",
 				icon: iconForThinkingRole("default"),
+				baselineSummary: summary,
+				challengerSummary: summary,
+				summaryEvents: [],
+				collapsedPriority: 0,
+				hasExplicitFailure: false,
+				hasExplicitSuccess: false,
 			});
 			return;
 		}
 
 		const stepTexts = splitThinkingIntoStepTexts(block.text);
 		stepTexts.forEach((stepText, stepIndex) => {
-			const summary = summarizeThinkingText(stepText);
-			const role = inferThinkingRole(`${summary}\n${stepText}`);
+			const summaryDetails = summarizeThinkingTextDetailed(stepText);
+			const role = inferThinkingRole(`${summaryDetails.summary}\n${stepText}`);
 			steps.push({
 				id: `${block.contentIndex}-${stepIndex}`,
 				contentIndex: block.contentIndex,
 				blockIndex,
 				stepIndex,
-				summary,
+				summary: summaryDetails.summary,
 				body: stepText.trim(),
 				role,
 				icon: iconForThinkingRole(role),
+				baselineSummary: summaryDetails.baselineSummary,
+				challengerSummary: summaryDetails.challengerSummary,
+				summaryEvents: summaryDetails.events,
+				collapsedPriority: summaryDetails.collapsedPriority,
+				hasExplicitFailure: summaryDetails.hasExplicitFailure,
+				hasExplicitSuccess: summaryDetails.hasExplicitSuccess,
 			});
 		});
 	});

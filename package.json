@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-steps",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "license": "MIT",
   "type": "module",
@@ -39,7 +39,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "npm run build && node --import tsx test/thinking-steps.test.ts"
+    "test": "npm run build && node --import tsx test/thinking-steps.test.ts && node --import tsx test/summarizer-challenger.test.ts"
   },
   "devDependencies": {
     "@mariozechner/pi-ai": "0.69.0",

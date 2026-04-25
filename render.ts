@@ -61,7 +61,7 @@ function sanitizeThinkingText(text: string): string {
 function parseThinkingInlineSegments(text: string): InlineSegment[] {
 	const sanitized = sanitizeThinkingText(text);
 	const segments: InlineSegment[] = [];
-	const markerRe = /(\*\*|__)(.+?)\1|`([^`]+)`|(\*|_)([^*_]+?)\4/g;
+	const markerRe = /(\*\*|__)(?=\S)([\s\S]*?\S)\1|`([^`]+)`|(?<![\w/.-])\*(?!\*)(?=\S)([\s\S]*?\S)(?<!\*)\*(?![\w/.-])|(?<![\w/.-])_(?!_)(?=\S)([\s\S]*?\S)(?<!_)_(?![\w/.-])/g;
 	let lastIndex = 0;
 	for (const match of sanitized.matchAll(markerRe)) {
 		const markerIndex = match.index ?? 0;
@@ -70,6 +70,7 @@ function parseThinkingInlineSegments(text: string): InlineSegment[] {
 		}
 		if (match[2]) segments.push({ text: match[2], style: "bold" });
 		if (match[3]) segments.push({ text: match[3], style: "code" });
+		if (match[4]) segments.push({ text: match[4], style: "plain" });
 		if (match[5]) segments.push({ text: match[5], style: "plain" });
 		lastIndex = markerIndex + match[0].length;
 	}
@@ -116,7 +117,23 @@ function pickCollapsedStep(steps: DerivedThinkingStep[], activeStepId?: string):
 		const active = steps.find((step) => step.id === activeStepId);
 		if (active) return active;
 	}
-	return steps[steps.length - 1];
+
+	let latestFailureIndex = -1;
+	let latestSuccessAfterFailureIndex = -1;
+
+	for (let index = 0; index < steps.length; index += 1) {
+		const step = steps[index]!;
+		if (step.hasExplicitFailure) latestFailureIndex = index;
+		if (latestFailureIndex !== -1 && step.hasExplicitSuccess && index > latestFailureIndex) {
+			latestSuccessAfterFailureIndex = index;
+		}
+	}
+
+	if (latestSuccessAfterFailureIndex !== -1) return steps[latestSuccessAfterFailureIndex];
+	if (latestFailureIndex !== -1) return steps[latestFailureIndex];
+
+	return [...steps]
+		.sort((left, right) => (right.collapsedPriority ?? 0) - (left.collapsedPriority ?? 0) || right.blockIndex - left.blockIndex || right.stepIndex - left.stepIndex)[0];
 }
 function wrapCollapsedSummaryText(theme: ThinkingThemeLike, text: string, firstWidth: number, continuationWidth: number): string[] {
 	const words = parseThinkingInlineSegments(text).flatMap((segment) =>
@@ -173,9 +190,10 @@ function wrapCollapsedSummaryText(theme: ThinkingThemeLike, text: string, firstW
 
 function stripInlineFormattingMarkers(text: string): string {
 	return text
-		.replace(/(\*\*|__)(.+?)\1/g, "$2")
+		.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2")
 		.replace(/`([^`]+)`/g, "$1")
-		.replace(/(\*|_)([^*_]+?)\1/g, "$2");
+		.replace(/(?<![\w/.-])\*(?!\*)(?=\S)([\s\S]*?\S)(?<!\*)\*(?![\w/.-])/g, "$1")
+		.replace(/(?<![\w/.-])_(?!_)(?=\S)([\s\S]*?\S)(?<!_)_(?![\w/.-])/g, "$1");
 }
 
 function renderCollapsed(theme: ThinkingThemeLike, width: number, steps: DerivedThinkingStep[], activeStepId?: string, isActive = false, nowMs = Date.now()): string[] {
@@ -205,13 +223,60 @@ function renderCollapsed(theme: ThinkingThemeLike, width: number, steps: Derived
 	});
 }
 
+function stepHasEventType(step: DerivedThinkingStep, type: string): boolean {
+	return step.summaryEvents?.some((event) => event.type === type) ?? false;
+}
+
+function selectSummarySteps(steps: DerivedThinkingStep[]): DerivedThinkingStep[] {
+	if (steps.length <= 5) return steps;
+
+	const indexed = steps.map((step, index) => ({ step, index }));
+	const selected = new Set<number>();
+	let latestFailureIndex = -1;
+	let latestSuccessAfterFailureIndex = -1;
+
+	for (let index = 0; index < steps.length; index += 1) {
+		const step = steps[index]!;
+		if (step.hasExplicitFailure) latestFailureIndex = index;
+		if (latestFailureIndex !== -1 && step.hasExplicitSuccess && index > latestFailureIndex) {
+			latestSuccessAfterFailureIndex = index;
+		}
+	}
+
+	if (latestFailureIndex !== -1) selected.add(latestFailureIndex);
+	if (latestSuccessAfterFailureIndex !== -1) selected.add(latestSuccessAfterFailureIndex);
+
+	const scoreEntry = ({ step, index }: { step: DerivedThinkingStep; index: number }): number => {
+		let score = step.collapsedPriority ?? 0;
+		if (index === latestFailureIndex && latestSuccessAfterFailureIndex === -1) score += 120;
+		if (index === latestSuccessAfterFailureIndex) score += 110;
+		if (stepHasEventType(step, "decision") || stepHasEventType(step, "plan_change")) score += 80;
+		if (step.hasExplicitFailure) score += 50;
+		if (step.hasExplicitSuccess) score += 45;
+		if (stepHasEventType(step, "focus") && !stepHasEventType(step, "decision") && !stepHasEventType(step, "plan_change") && !step.hasExplicitFailure && !step.hasExplicitSuccess) score -= 15;
+		return score + (index / 100);
+	};
+
+	const targetCount = Math.min(5, steps.length);
+	for (const entry of [...indexed].sort((left, right) => scoreEntry(right) - scoreEntry(left))) {
+		if (selected.size >= targetCount) break;
+		selected.add(entry.index);
+	}
+
+	return [...selected]
+		.sort((left, right) => left - right)
+		.map((index) => steps[index]!)
+		.slice(0, targetCount);
+}
+
 function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedThinkingStep[], activeStepId?: string): string[] {
 	const lines = [
 		truncateToWidth(`${theme.fg("muted", "┆")} ${theme.fg("dim", "Thinking Steps · Summary")}`, width),
 	];
-	for (let index = 0; index < steps.length; index++) {
-		const step = steps[index]!;
-		const connector = index === steps.length - 1 ? "└─" : "├─";
+	const visibleSteps = selectSummarySteps(steps);
+	for (let index = 0; index < visibleSteps.length; index++) {
+		const step = visibleSteps[index]!;
+		const connector = index === visibleSteps.length - 1 ? "└─" : "├─";
 		lines.push(...wrapStepHeader(theme, width, step, step.id === activeStepId, connector));
 	}
 	return lines;
