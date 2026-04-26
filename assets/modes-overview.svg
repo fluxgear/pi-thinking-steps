@@ -1,50 +1,72 @@
-<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="1200" height="700" viewBox="0 0 1200 700" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="620" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="700" gradientUnits="userSpaceOnUse">
       <stop stop-color="#020617"/>
       <stop offset="1" stop-color="#111827"/>
     </linearGradient>
-    <filter id="shadow" x="40" y="40" width="1120" height="540" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.45"/>
+    <linearGradient id="collapsedGlow" x1="80" y1="170" x2="380" y2="530" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1D4ED8" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#0F172A" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="summaryGlow" x1="450" y1="170" x2="750" y2="530" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C3AED" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#0F172A" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="expandedGlow" x1="820" y1="170" x2="1120" y2="530" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16A34A" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#0F172A" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="36" y="120" width="1128" height="468" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.42"/>
     </filter>
   </defs>
 
-  <rect width="1200" height="620" rx="32" fill="url(#bg)"/>
+  <rect width="1200" height="700" rx="32" fill="url(#bg)"/>
+  <circle cx="1045" cy="110" r="170" fill="#2563EB" fill-opacity="0.10"/>
+  <circle cx="155" cy="636" r="170" fill="#7C3AED" fill-opacity="0.08"/>
+
   <text x="600" y="86" text-anchor="middle" fill="#E5E7EB" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="42" font-weight="700">Choose the right view for the moment</text>
-  <text x="600" y="122" text-anchor="middle" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20">All three modes preserve the same underlying reasoning while optimizing the signal-to-noise ratio.</text>
+  <text x="600" y="122" text-anchor="middle" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20">The same reasoning, three different signal-to-noise ratios for real terminal work.</text>
 
   <g filter="url(#shadow)">
-    <rect x="86" y="180" width="312" height="340" rx="24" fill="#0F172A" stroke="#2563EB"/>
-    <rect x="444" y="180" width="312" height="340" rx="24" fill="#0F172A" stroke="#7C3AED"/>
-    <rect x="802" y="180" width="312" height="340" rx="24" fill="#0F172A" stroke="#16A34A"/>
+    <rect x="72" y="170" width="300" height="360" rx="24" fill="#0F172A" stroke="#2563EB"/>
+    <rect x="450" y="170" width="300" height="360" rx="24" fill="#0F172A" stroke="#7C3AED"/>
+    <rect x="828" y="170" width="300" height="360" rx="24" fill="#0F172A" stroke="#16A34A"/>
   </g>
 
-  <text x="120" y="224" fill="#93C5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">COLLAPSED</text>
-  <text x="120" y="258" fill="#E2E8F0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Minimal live signal</text>
-  <text x="120" y="294" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">One line. One active step. Best when the model is still thinking.</text>
-  <text x="120" y="350" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">│ Thinking ✓ Tests passed after tightening</text>
-  <text x="120" y="374" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">│ summary selection coverage. ·</text>
-  <text x="120" y="432" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Lowest visual noise</text>
-  <text x="120" y="460" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Live active-state animation</text>
-  <text x="120" y="488" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Great for narrow terminals</text>
+  <rect x="72" y="170" width="300" height="360" rx="24" fill="url(#collapsedGlow)"/>
+  <rect x="450" y="170" width="300" height="360" rx="24" fill="url(#summaryGlow)"/>
+  <rect x="828" y="170" width="300" height="360" rx="24" fill="url(#expandedGlow)"/>
 
-  <text x="478" y="224" fill="#C4B5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">SUMMARY</text>
-  <text x="478" y="258" fill="#E2E8F0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Reasoning flow at a glance</text>
-  <text x="478" y="294" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">One summarized line per derived step, ordered like the transcript.</text>
-  <text x="478" y="350" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">├─ ◫ Inspect parse.ts and render.ts.</text>
-  <text x="478" y="374" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">├─ ↔ Compare collapsed and summary paths.</text>
-  <text x="478" y="398" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">└─ ✓ Build passed after updating typing.</text>
-  <text x="478" y="456" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Good default scan view</text>
-  <text x="478" y="484" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Stable deterministic summaries</text>
-  <text x="478" y="512" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Preserves chronology and intent</text>
+  <text x="104" y="214" fill="#93C5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">COLLAPSED</text>
+  <text x="104" y="250" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Minimal live signal</text>
+  <text x="104" y="284" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">One compact line for the active step.</text>
+  <text x="104" y="324" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│ Thinking ✓ Tests passed after</text>
+  <text x="104" y="346" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│ tightening summary coverage. ·</text>
+  <text x="104" y="400" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Lowest visual noise</text>
+  <text x="104" y="428" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Best while thinking is active</text>
+  <text x="104" y="456" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Strong fit for narrow terminals</text>
 
-  <text x="836" y="224" fill="#86EFAC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">EXPANDED</text>
-  <text x="836" y="258" fill="#E2E8F0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Full detail, cleaner terminal</text>
-  <text x="836" y="294" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">Shows the whole step body with structure, wrapping, and ANSI-safe formatting.</text>
-  <text x="836" y="350" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">├─ ◫ Inspect parse.ts and render.ts.</text>
-  <text x="836" y="374" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">│  Compare candidate extraction and</text>
-  <text x="836" y="398" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16">│  summary rendering side by side.</text>
-  <text x="836" y="456" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Best for deep debugging</text>
-  <text x="836" y="484" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• Markdown-aware terminal formatting</text>
-  <text x="836" y="512" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">• No web-style noise</text>
+  <text x="482" y="214" fill="#C4B5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">SUMMARY</text>
+  <text x="482" y="250" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Reasoning flow</text>
+  <text x="482" y="280" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">at a glance</text>
+  <text x="482" y="314" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">One concise line per derived step,</text>
+  <text x="482" y="336" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">kept in transcript order.</text>
+  <text x="482" y="378" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ◫ Inspect parse.ts and render.ts.</text>
+  <text x="482" y="400" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ↔ Compare collapsed and summary</text>
+  <text x="482" y="422" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  selection paths.</text>
+  <text x="482" y="444" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">└─ ✓ Build passed after typing fix.</text>
+  <text x="482" y="486" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Good default scan view</text>
+  <text x="482" y="514" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Stable deterministic summaries</text>
+
+  <text x="860" y="214" fill="#86EFAC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">EXPANDED</text>
+  <text x="860" y="250" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Full detail,</text>
+  <text x="860" y="280" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">clean terminal layout</text>
+  <text x="860" y="314" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">Show the whole step body with</text>
+  <text x="860" y="336" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">wrapping and ANSI-safe rendering.</text>
+  <text x="860" y="378" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ◫ Inspect parse.ts and render.ts.</text>
+  <text x="860" y="400" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  Compare candidate extraction and</text>
+  <text x="860" y="422" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  summary rendering side by side.</text>
+  <text x="860" y="486" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Best for deep debugging</text>
+  <text x="860" y="514" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• No web-style chrome</text>
 </svg>

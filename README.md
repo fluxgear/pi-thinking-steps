@@ -10,9 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.4"><img alt="release" src="https://img.shields.io/badge/release-v1.0.4-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.6"><img alt="release" src="https://img.shields.io/badge/release-v1.0.6-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
-  <img alt="pi versions" src="https://img.shields.io/badge/pinned%20Pi%20packages-0.69.0-0ea5e9" />
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
 </p>
