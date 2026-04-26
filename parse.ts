@@ -598,7 +598,7 @@ function renderSummaryEvent(event: ThinkingSummaryEvent): string {
 			return truncateText(`Changed plan: ${insteadMatch[1]}.`, SUMMARY_MAX_CHARS);
 		}
 		if (/^the safer plan is to keep the current summarizer as the baseline, add an event-aware challenger, and only choose the challenger when it is clearly better$/i.test(normalized)) {
-			return "Plan: keep current summarizer baseline; add challenger; use it when clearly better.";
+			return "Plan: keep current summarizer baseline; add event-aware challenger; use when better.";
 		}
 	}
 
@@ -805,7 +805,7 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount;
 	const shouldPreferPlanChangeTemplate = challenger.events.length === 1
 		&& challenger.events[0]?.type === "plan_change"
-		&& /^(?:Changed plan:|Plan: keep current summarizer baseline; add challenger; use it when clearly better\.)/i.test(challengerSummary)
+		&& /^(?:Changed plan:|Plan: keep current summarizer baseline; add (?:event-aware )?challenger; use(?: it)? when (?:clearly )?better\.)/i.test(challengerSummary)
 		&& /^(?:Instead of|The safer plan is)\b/i.test(baselineSummary)
 		&& challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount

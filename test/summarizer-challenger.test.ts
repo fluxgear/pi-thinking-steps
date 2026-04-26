@@ -142,12 +142,12 @@ describe("unchanged semantic-quality regressions", () => {
 		assert.doesNotMatch(summary, /^Instead of rewriting the whole summarizer/i);
 	});
 
-	it("renders the hybrid baseline-plus-challenger plan without dropping the challenger fact", () => {
+	it("renders the hybrid baseline-plus-challenger plan without dropping the event-aware challenger qualifier", () => {
 		const summary = summarizeThinkingText(
 			"The safer plan is to keep the current summarizer as the baseline, add an event-aware challenger, and only choose the challenger when it is clearly better.",
 		);
 		assert.match(summary, /current summarizer.*baseline|baseline.*current summarizer/i);
-		assert.match(summary, /challenger/i);
+		assert.match(summary, /event-aware challenger/i);
 		assert.match(summary, /better/i);
 		assert.doesNotMatch(summary, /^The safer plan is to keep the current summarizer as the baseline/i);
 	});
