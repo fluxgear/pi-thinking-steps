@@ -424,6 +424,15 @@ describe("summarizeThinkingText", () => {
 		assert.ok(summary.length <= 84);
 	});
 
+	it("keeps long visible summaries complete and period-terminated without ellipsis", () => {
+		const summary = summarizeThinkingText(
+			"Inspect parse.ts, render.ts, and test/thinking-steps.test.ts before applying the patch and rerunning npm test to preserve failure wording in summary mode.",
+		);
+		assert.ok(summary.length <= 84);
+		assert.ok(summary.endsWith("."));
+		assert.ok(!summary.includes("…"));
+	});
+
 	it("handles mixed bullets and prose", () => {
 		const summary = summarizeThinkingText(
 			"We need to decide the safest next step.\n\n- Found TS2322 in render.ts.\n- Retry npm test after patching the type.\n\nThat should confirm the fix.",
@@ -1089,6 +1098,54 @@ describe("thinkingStepsExtension persistence", () => {
 		});
 	});
 
+	it("restores a valid global default when the project default has an invalid schema", async () => {
+		await withPersistenceEnvironment(async ({ cwd, home }) => {
+			await mkdir(join(cwd, ".pi"), { recursive: true });
+			await mkdir(join(home, ".pi", "agent", "state"), { recursive: true });
+			for (const invalidContent of [JSON.stringify({}), JSON.stringify({ mode: "bogus" }), JSON.stringify([])]) {
+				await writeFile(join(cwd, ".pi", "thinking-steps.json"), `${invalidContent}\n`, "utf8");
+				await writeFile(join(home, ".pi", "agent", "state", "thinking-steps.json"), `${JSON.stringify({ mode: "collapsed" }, null, 2)}\n`, "utf8");
+
+				resetExtensionState(cwd);
+				const { pi, ctx } = createExtensionHarness([], true, cwd);
+				const sessionStart = getSingleHandler(pi, "session_start");
+				const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+
+				try {
+					await sessionStart({}, ctx);
+					assert.equal(getThinkingStepsMode(cwd), "collapsed");
+					assert.deepEqual(ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: collapsed" });
+					assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("Invalid thinking view preference")));
+				} finally {
+					await sessionShutdown({}, ctx);
+				}
+			}
+		});
+	});
+
+	it("falls back to summary mode when the global default has an invalid schema or empty file", async () => {
+		await withPersistenceEnvironment(async ({ cwd, home }) => {
+			await mkdir(join(home, ".pi", "agent", "state"), { recursive: true });
+			for (const invalidContent of [JSON.stringify({}), JSON.stringify({ mode: "bogus" }), ""]) {
+				await writeFile(join(home, ".pi", "agent", "state", "thinking-steps.json"), invalidContent.length > 0 ? `${invalidContent}\n` : "", "utf8");
+
+				resetExtensionState(cwd);
+				const { pi, ctx } = createExtensionHarness([], true, cwd);
+				const sessionStart = getSingleHandler(pi, "session_start");
+				const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+
+				try {
+					await sessionStart({}, ctx);
+					assert.equal(getThinkingStepsMode(cwd), "summary");
+					assert.deepEqual(ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: summary" });
+					assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("Thinking steps persistence error:")));
+				} finally {
+					await sessionShutdown({}, ctx);
+				}
+			}
+		});
+	});
+
 	it("clears project and global defaults for future sessions without changing the current session mode", async () => {
 		await withPersistenceEnvironment(async ({ cwd, otherCwd }) => {
 			resetExtensionState();
@@ -1484,6 +1541,47 @@ describe("deriveThinkingSteps list continuations", () => {
 		);
 		assert.equal(steps[1]?.body, "2. Compare the extension hooks.");
 	});
+
+	it("keeps heading scope on each item in a headed multi-item list", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "## Patch plan\n\n- Inspect parse.ts.\n- Update render.ts.",
+			},
+		]);
+
+		assert.equal(steps.length, 2);
+		assert.equal(steps[0]?.body, "## Patch plan\n\n- Inspect parse.ts.");
+		assert.equal(steps[1]?.body, "## Patch plan\n\n- Update render.ts.");
+	});
+
+	it("keeps heading scope on blank-line-separated list items under one heading", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "## Patch plan\n\n1. Inspect parse.ts.\n\n2. Update render.ts.",
+			},
+		]);
+
+		assert.equal(steps.length, 2);
+		assert.equal(steps[0]?.body, "## Patch plan\n\n1. Inspect parse.ts.");
+		assert.equal(steps[1]?.body, "## Patch plan\n\n2. Update render.ts.");
+	});
+
+	it("splits an explicit failure paragraph after list items into its own step", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "1. Inspect parse.ts.\n\n2. Update render.ts.\n\nnpm test failed with exit code 1.",
+			},
+		]);
+
+		assert.equal(steps.length, 3);
+		assert.equal(steps[0]?.body, "1. Inspect parse.ts.");
+		assert.equal(steps[1]?.body, "2. Update render.ts.");
+		assert.equal(steps[2]?.body, "npm test failed with exit code 1.");
+		assert.equal(steps[2]?.hasExplicitFailure, true);
+	});
 });
 
 
@@ -1528,6 +1626,31 @@ describe("renderThinkingStepsLines control-sequence sanitization", () => {
 		assert.ok(!summaryJoined.includes("\u0007"));
 		assert.ok(!expandedJoined.includes("\u0007"));
 		assert.ok(summaryJoined.includes("Verify that refreshes can be triggered safely."));
+		assert.ok(expandedJoined.includes("Verify that refreshes can be triggered safely."));
+	});
+
+	it("strips raw C1 control bytes from rendered thinking text", () => {
+		const steps = deriveThinkingSteps([{
+			contentIndex: 0,
+			text: "Inspect \u009b31mrender.ts\u009b0m carefully.\n\nVerify\u0085 that refreshes can be triggered safely.",
+		}]);
+		const summaryLines = renderThinkingStepsLines(plainTheme, 120, {
+			mode: "summary",
+			steps,
+			isActive: false,
+		});
+		const expandedLines = renderThinkingStepsLines(plainTheme, 120, {
+			mode: "expanded",
+			steps,
+			isActive: false,
+		});
+		const summaryJoined = summaryLines.join("\n");
+		const expandedJoined = expandedLines.join("\n");
+		assert.ok(!summaryJoined.includes("\u009b"));
+		assert.ok(!expandedJoined.includes("\u009b"));
+		assert.ok(!summaryJoined.includes("\u0085"));
+		assert.ok(!expandedJoined.includes("\u0085"));
+		assert.ok(summaryJoined.includes("Inspect render.ts carefully."));
 		assert.ok(expandedJoined.includes("Verify that refreshes can be triggered safely."));
 	});
 
@@ -1786,6 +1909,58 @@ describe("thinkingStepsExtension failure paths", () => {
 		});
 	});
 
+	it("disables live mode switching for degraded sessions while still saving future defaults", async () => {
+		await withPersistenceEnvironment(async ({ cwd, home }) => {
+			const installFailure = new Error("install failed");
+			const rejectedInstall: Promise<() => void | Promise<void>> = Promise.reject(installFailure);
+			rejectedInstall.catch(() => {});
+			setPatchInstallPromise(rejectedInstall);
+
+			resetExtensionState(cwd);
+			const { pi, ctx } = createExtensionHarness([], true, cwd);
+			const sessionStart = getSingleHandler(pi, "session_start");
+			const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+			const command = pi.commands.get("thinking-steps");
+			const shortcut = pi.shortcuts[0];
+			assert.ok(command);
+			assert.ok(shortcut);
+
+			try {
+				await sessionStart({}, ctx);
+				assert.equal(getPatchRefCount(), 0);
+				assert.equal(pi.appendedEntries.length, 0);
+				assert.equal(ctx.ui.hiddenThinkingLabels.length, 0);
+				assert.equal(ctx.ui.statuses.length, 0);
+				assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("Thinking steps patch error: install failed")));
+				assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("native thinking renderer")));
+
+				await command.handler("collapsed", ctx);
+				assert.equal(getThinkingStepsMode(cwd), "summary");
+				assert.equal(pi.appendedEntries.length, 0);
+
+				await shortcut.handler(ctx);
+				assert.equal(getThinkingStepsMode(cwd), "summary");
+				assert.equal(pi.appendedEntries.length, 0);
+
+				await command.handler("project collapsed", ctx);
+				const projectPreference = JSON.parse(await readFile(join(cwd, ".pi", "thinking-steps.json"), "utf8")) as { mode: string };
+				assert.equal(projectPreference.mode, "collapsed");
+				assert.ok(ctx.ui.notifications.some((notification) => notification.level === "info" && notification.message.includes("future compatible sessions")));
+
+				await command.handler("global expanded", ctx);
+				const globalPreference = JSON.parse(await readFile(join(home, ".pi", "agent", "state", "thinking-steps.json"), "utf8")) as { mode: string };
+				assert.equal(globalPreference.mode, "expanded");
+
+				await command.handler("project clear", ctx);
+				await assert.rejects(readFile(join(cwd, ".pi", "thinking-steps.json"), "utf8"));
+			} finally {
+				setPatchInstallPromise(undefined);
+				await sessionShutdown({}, ctx);
+				resetExtensionState();
+			}
+		});
+	});
+
 	it("reports write failures for scoped defaults without changing session state", async () => {
 		await withPersistenceEnvironment(async ({ cwd }) => {
 			await writeFile(join(cwd, ".pi"), "occupied", "utf8");
@@ -1845,7 +2020,7 @@ describe("thinkingStepsExtension failure paths", () => {
 		}
 	});
 
-	it("releases a retained patch from a new extension instance for the same scope", async () => {
+	it("releases a retained patch from a later same-scope extension instance when session_shutdown is not observed", async () => {
 		resetExtensionState("/scope-reload");
 		const firstHarness = createExtensionHarness([], true, "/scope-reload");
 		const secondHarness = createExtensionHarness([], true, "/scope-reload");
@@ -2050,6 +2225,29 @@ describe("UX regression coverage", () => {
 		assert.ok(normalized.includes(token));
 	});
 
+	it("keeps an active collapsed pulse glyph visible at narrow wrapped widths", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "Inspect parse.ts and render.ts to find the regression in collapsed selection.",
+			},
+		]);
+		const width = 33;
+		const lines = renderThinkingStepsLines(theme, width, {
+			mode: "collapsed",
+			steps,
+			activeStepId: steps[0]?.id,
+			isActive: true,
+			nowMs: 180,
+		});
+
+		assert.ok(lines.length > 1);
+		assertWidthInvariant(lines, width);
+		const joined = stripAnsi(lines.join("\n"));
+		assert.ok(!joined.includes("..."));
+		assert.ok((stripAnsi(lines.at(-1) ?? "")).endsWith(" •"));
+	});
+
 	it("keeps collapsed, summary, and expanded output within the requested width", () => {
 		const steps = deriveThinkingSteps([
 			{
@@ -2153,6 +2351,38 @@ describe("scope-aware runtime state", () => {
 		assert.ok(collapsedLines.includes("Thinking"));
 		assert.ok(!collapsedLines.includes("Thinking Steps · Expanded"));
 		assert.ok(expandedLines.includes("Thinking Steps · Expanded"));
+	});
+
+	it("rerenders summary and expanded output when the active step changes at the same width", () => {
+		const scope = "/scope-cache";
+		const trackingTheme: ThinkingThemeLike = {
+			fg: (_color, text) => text,
+			bold: (text) => `<b>${text}</b>`,
+		};
+		const blocks = [
+			{ contentIndex: 0, text: "Inspect alpha." },
+			{ contentIndex: 1, text: "Verify beta." },
+		];
+
+		for (const mode of ["summary", "expanded"] as const) {
+			resetExtensionState(scope);
+			setCurrentThinkingScopeKey(scope);
+			setThinkingStepsMode(mode, scope);
+			clearActiveThinkingState(undefined, scope);
+			const component = new ThinkingStepsComponent(trackingTheme, 777, blocks);
+
+			setActiveThinkingState({ active: true, messageTimestamp: 777, contentIndex: 0 }, scope);
+			const firstRender = component.render(80).join("\n");
+
+			setActiveThinkingState({ active: true, messageTimestamp: 777, contentIndex: 1 }, scope);
+			const secondRender = component.render(80).join("\n");
+
+			assert.notEqual(secondRender, firstRender);
+			assert.match(firstRender, /<b>Inspect alpha\.<\/b>/);
+			assert.doesNotMatch(firstRender, /<b>Verify beta\.<\/b>/);
+			assert.match(secondRender, /<b>Verify beta\.<\/b>/);
+			assert.doesNotMatch(secondRender, /<b>Inspect alpha\.<\/b>/);
+		}
 	});
 
 	it("thinkingStepsExtension scopes duplicate message timestamps per extension instance", async () => {
@@ -2289,15 +2519,22 @@ describe("Batch 2 regressions", () => {
 });
 
 describe("repo metadata contracts", () => {
-	it("keeps published files, pinned Pi dependencies, and docs aligned", async () => {
+	it("keeps published files, pinned Pi dependencies, docs, and archived prompts aligned", async () => {
 		const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
+			version: string;
 			files: string[];
 			license: string;
 			devDependencies: Record<string, string>;
 		};
+		const packageLock = JSON.parse(await readFile("package-lock.json", "utf8")) as {
+			version: string;
+			packages?: Record<string, { version?: string }>;
+		};
 		for (const file of packageJson.files) {
 			await assert.doesNotReject(readFile(file, "utf8"));
 		}
+		assert.equal(packageJson.version, packageLock.version);
+		assert.equal(packageJson.version, packageLock.packages?.[""]?.version);
 		assert.equal(packageJson.license, "MIT");
 		assert.equal(packageJson.devDependencies["@mariozechner/pi-ai"], "0.69.0");
 		assert.equal(packageJson.devDependencies["@mariozechner/pi-coding-agent"], "0.69.0");
@@ -2305,15 +2542,31 @@ describe("repo metadata contracts", () => {
 		assert.ok(!Object.values(packageJson.devDependencies).includes("latest"));
 
 		const license = await readFile("LICENSE", "utf8");
-		assert.match(license, /^MIT License/m);
+		assert.ok(license.includes("MIT License"));
 
 		const readme = await readFile("README.md", "utf8");
-		assert.match(readme, /\[MIT License\]\(\.\/LICENSE\)/);
-		assert.match(readme, /badge\/license-MIT/i);
+		assert.ok(readme.includes("[MIT License](./LICENSE)"));
+		assert.ok(readme.includes("badge/license-MIT"));
+		assert.ok(readme.includes(`releases/tag/v${packageJson.version}`));
+		assert.ok(readme.includes(`release-v${packageJson.version}`));
 
 		const agents = await readFile("AGENTS.md", "utf8");
-		assert.match(agents, /project clear/);
-		assert.match(agents, /global clear/);
-		assert.match(agents, /session -> project -> global -> summary/);
+		assert.ok(agents.includes("project clear"));
+		assert.ok(agents.includes("global clear"));
+		assert.ok(agents.includes("session -> project -> global -> summary"));
+		assert.ok(agents.includes(`## Current Version\n${packageJson.version}`));
+		assert.ok(agents.includes("plan.md"));
+		assert.ok(agents.includes("progress.md"));
+		assert.ok(!agents.includes("summarization-algorithm.md"));
+
+		const archivedContinuePrompt = await readFile("prompts/continue-2026-04-16.md", "utf8");
+		assert.ok(archivedContinuePrompt.includes("Historical continuation prompt") || archivedContinuePrompt.includes("Archived continue prompt"));
+		assert.ok(archivedContinuePrompt.includes("do **not** treat any git/tag/push/clean-tree statements below as current repo truth"));
+
+		const auditPromptV2 = await readFile("prompts/audit/generalized-deep-audit_v2-0-0.md", "utf8");
+		assert.ok(auditPromptV2.includes("Canonical generalized audit prompt"));
+		assert.ok(auditPromptV2.includes("plan.md"));
+		assert.ok(auditPromptV2.includes("progress.md"));
+		assert.ok(!auditPromptV2.includes("summarization-algorithm.md"));
 	});
 });

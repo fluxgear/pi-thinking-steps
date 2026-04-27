@@ -53,9 +53,12 @@ function sanitizeThinkingText(text: string): string {
 	return text
 		.replace(/\r\n?/g, "\n")
 		.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+		.replace(/\u009d[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
 		.replace(/\u001bP[\s\S]*?\u001b\\/g, "")
+		.replace(/\u0090[\s\S]*?\u001b\\/g, "")
 		.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g, "")
-		.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "");
+		.replace(/\u009b[0-?]*[ -/]*[@-~]/g, "")
+		.replace(/[\x00-\x08\x0B-\x1F\x7F-\x9F]/g, "");
 }
 
 function parseThinkingInlineSegments(text: string): InlineSegment[] {
@@ -203,23 +206,25 @@ function renderCollapsed(theme: ThinkingThemeLike, width: number, steps: Derived
 	const label = "Thinking";
 	const icon = theme.fg(roleColor(step.role), step.icon);
 	const activity = isActive ? pulseGlyph(theme, nowMs) : theme.fg("dim", "·");
+	const activitySuffix = ` ${activity}`;
+	const activityWidth = visibleWidth(activitySuffix);
 	const prefix = `${theme.fg("muted", "│")} ${theme.fg("dim", label)} ${icon} `;
 	const continuationPrefix = `${theme.fg("muted", "│")} ${" ".repeat(visibleWidth(`${label} ${step.icon} `))}`;
 	const summaryLines = wrapCollapsedSummaryText(
 		theme,
 		step.summary,
-		width - visibleWidth(prefix),
-		width - visibleWidth(continuationPrefix),
+		Math.max(1, width - visibleWidth(prefix) - activityWidth),
+		Math.max(1, width - visibleWidth(continuationPrefix) - activityWidth),
 	);
 
 	if (summaryLines.length <= 1) {
-		return [truncateToWidth(`${prefix}${summaryLines[0] ?? renderThinkingInlineMarkup(theme, step.summary)} ${activity}`, width)];
+		return [truncateToWidth(`${prefix}${summaryLines[0] ?? renderThinkingInlineMarkup(theme, step.summary)}${activitySuffix}`, width, "")];
 	}
 
 	return summaryLines.map((line, index) => {
-		if (index === 0) return truncateToWidth(`${prefix}${line}`, width);
-		if (index === summaryLines.length - 1) return truncateToWidth(`${continuationPrefix}${line} ${activity}`, width);
-		return truncateToWidth(`${continuationPrefix}${line}`, width);
+		if (index === 0) return truncateToWidth(`${prefix}${line}`, width, "");
+		if (index === summaryLines.length - 1) return truncateToWidth(`${continuationPrefix}${line}${activitySuffix}`, width, "");
+		return truncateToWidth(`${continuationPrefix}${line}`, width, "");
 	});
 }
 
@@ -227,11 +232,12 @@ function stepHasEventType(step: DerivedThinkingStep, type: string): boolean {
 	return step.summaryEvents?.some((event) => event.type === type) ?? false;
 }
 
-function selectSummarySteps(steps: DerivedThinkingStep[]): DerivedThinkingStep[] {
+function selectSummarySteps(steps: DerivedThinkingStep[], activeStepId?: string): DerivedThinkingStep[] {
 	if (steps.length <= 5) return steps;
 
 	const indexed = steps.map((step, index) => ({ step, index }));
 	const selected = new Set<number>();
+	const activeIndex = activeStepId ? steps.findIndex((step) => step.id === activeStepId) : -1;
 	let latestFailureIndex = -1;
 	let latestSuccessAfterFailureIndex = -1;
 
@@ -243,6 +249,7 @@ function selectSummarySteps(steps: DerivedThinkingStep[]): DerivedThinkingStep[]
 		}
 	}
 
+	if (activeIndex !== -1) selected.add(activeIndex);
 	if (latestFailureIndex !== -1) selected.add(latestFailureIndex);
 	if (latestSuccessAfterFailureIndex !== -1) selected.add(latestSuccessAfterFailureIndex);
 
@@ -273,7 +280,7 @@ function renderSummary(theme: ThinkingThemeLike, width: number, steps: DerivedTh
 	const lines = [
 		truncateToWidth(`${theme.fg("muted", "┆")} ${theme.fg("dim", "Thinking Steps · Summary")}`, width),
 	];
-	const visibleSteps = selectSummarySteps(steps);
+	const visibleSteps = selectSummarySteps(steps, activeStepId);
 	for (let index = 0; index < visibleSteps.length; index++) {
 		const step = visibleSteps[index]!;
 		const connector = index === visibleSteps.length - 1 ? "└─" : "├─";
@@ -362,7 +369,7 @@ export function renderThinkingStepsLines(theme: ThinkingThemeLike, width: number
 
 export class ThinkingStepsComponent implements Component {
 	private steps: DerivedThinkingStep[];
-	private widthCache?: number;
+	private cacheKey?: string;
 	private cachedLines?: string[];
 	private readonly scopeKey: string;
 
@@ -381,8 +388,9 @@ export class ThinkingStepsComponent implements Component {
 		const activeStepId = active.active && active.contentIndex !== undefined
 			? [...this.steps].reverse().find((step) => step.contentIndex === active.contentIndex)?.id
 			: undefined;
-		const cacheKeyMatches = this.widthCache === width && this.cachedLines && (mode !== "collapsed" || !active.active);
-		if (cacheKeyMatches && this.cachedLines) {
+		const shouldBypassCache = mode === "collapsed" && active.active;
+		const nextCacheKey = `${width}:${mode}:${active.active ? 1 : 0}:${activeStepId ?? ""}`;
+		if (!shouldBypassCache && this.cachedLines && this.cacheKey === nextCacheKey) {
 			return this.cachedLines;
 		}
 
@@ -394,18 +402,18 @@ export class ThinkingStepsComponent implements Component {
 			nowMs: Date.now(),
 		});
 
-		if (!(mode === "collapsed" && active.active)) {
-			this.widthCache = width;
+		if (!shouldBypassCache) {
+			this.cacheKey = nextCacheKey;
 			this.cachedLines = lines;
 		} else {
-			this.widthCache = undefined;
+			this.cacheKey = undefined;
 			this.cachedLines = undefined;
 		}
 		return lines;
 	}
 
 	invalidate(): void {
-		this.widthCache = undefined;
+		this.cacheKey = undefined;
 		this.cachedLines = undefined;
 	}
 }

@@ -43,29 +43,32 @@
     <circle cx="202" cy="352" r="7" fill="#22C55E"/>
     <text x="600" y="359" fill="#94A3B8" text-anchor="middle" font-family="JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16">Thinking Steps · three-mode terminal renderer</text>
 
-    <rect x="152" y="402" width="266" height="188" rx="18" fill="#0F172A" stroke="#1E3A8A"/>
+    <rect x="152" y="402" width="280" height="188" rx="18" fill="#0F172A" stroke="#1E3A8A"/>
     <text x="176" y="432" fill="#60A5FA" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">COLLAPSED</text>
-    <text x="176" y="464" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│ Thinking ✓ Build passed after</text>
-    <text x="176" y="486" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│ updating DerivedThinkingStep</text>
-    <text x="176" y="508" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│ typing. ·</text>
+    <text x="176" y="462" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│ Thinking ✓ Build passed</text>
+    <text x="176" y="482" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│ after updating</text>
+    <text x="176" y="502" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│ DerivedThinkingStep</text>
+    <text x="176" y="522" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│ typing. ·</text>
     <text x="176" y="552" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">Single live line, low noise,</text>
-    <text x="176" y="574" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">best for active thinking.</text>
+    <text x="176" y="572" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">best for active thinking.</text>
 
-    <rect x="467" y="402" width="266" height="188" rx="18" fill="#0F172A" stroke="#6D28D9"/>
-    <text x="491" y="432" fill="#A78BFA" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">SUMMARY</text>
-    <text x="491" y="464" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ◫ Inspect parse.ts and render.ts.</text>
-    <text x="491" y="486" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ↔ Compare summary-mode</text>
-    <text x="491" y="508" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  selection paths.</text>
-    <text x="491" y="530" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">└─ ✓ Tests passed after tightening</text>
-    <text x="491" y="552" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">   coverage.</text>
+    <rect x="456" y="402" width="280" height="188" rx="18" fill="#0F172A" stroke="#6D28D9"/>
+    <text x="480" y="432" fill="#A78BFA" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">SUMMARY</text>
+    <text x="480" y="462" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">├─ ◫ Inspect parse.ts and</text>
+    <text x="480" y="482" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  render.ts.</text>
+    <text x="480" y="502" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">├─ ↔ Compare summary-mode</text>
+    <text x="480" y="522" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  selection paths.</text>
+    <text x="480" y="542" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">└─ ✓ Tests passed after</text>
+    <text x="480" y="562" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">   tightening coverage.</text>
 
-    <rect x="782" y="402" width="266" height="188" rx="18" fill="#0F172A" stroke="#16A34A"/>
-    <text x="806" y="432" fill="#4ADE80" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">EXPANDED</text>
-    <text x="806" y="464" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ◫ Inspect parse.ts and render.ts.</text>
-    <text x="806" y="486" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  Compare candidate selection</text>
-    <text x="806" y="508" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  and summary rendering side</text>
-    <text x="806" y="530" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  by side.</text>
-    <text x="806" y="574" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">Full detail, still terminal-native.</text>
+    <rect x="760" y="402" width="280" height="188" rx="18" fill="#0F172A" stroke="#16A34A"/>
+    <text x="784" y="432" fill="#4ADE80" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">EXPANDED</text>
+    <text x="784" y="462" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">├─ ◫ Inspect parse.ts and</text>
+    <text x="784" y="482" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  render.ts.</text>
+    <text x="784" y="502" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  Compare candidate</text>
+    <text x="784" y="522" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  selection and summary</text>
+    <text x="784" y="542" fill="#94A3B8" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  rendering side by side.</text>
+    <text x="784" y="572" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">Full detail, still terminal-native.</text>
   </g>
 
   <rect x="120" y="660" width="960" height="16" rx="8" fill="#0F172A"/>

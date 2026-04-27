@@ -29,44 +29,57 @@
   <text x="600" y="122" text-anchor="middle" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20">The same reasoning, three different signal-to-noise ratios for real terminal work.</text>
 
   <g filter="url(#shadow)">
-    <rect x="72" y="170" width="300" height="360" rx="24" fill="#0F172A" stroke="#2563EB"/>
-    <rect x="450" y="170" width="300" height="360" rx="24" fill="#0F172A" stroke="#7C3AED"/>
-    <rect x="828" y="170" width="300" height="360" rx="24" fill="#0F172A" stroke="#16A34A"/>
+    <rect x="60" y="170" width="320" height="360" rx="24" fill="#0F172A" stroke="#2563EB"/>
+    <rect x="440" y="170" width="320" height="360" rx="24" fill="#0F172A" stroke="#7C3AED"/>
+    <rect x="820" y="170" width="320" height="360" rx="24" fill="#0F172A" stroke="#16A34A"/>
   </g>
 
-  <rect x="72" y="170" width="300" height="360" rx="24" fill="url(#collapsedGlow)"/>
-  <rect x="450" y="170" width="300" height="360" rx="24" fill="url(#summaryGlow)"/>
-  <rect x="828" y="170" width="300" height="360" rx="24" fill="url(#expandedGlow)"/>
+  <rect x="60" y="170" width="320" height="360" rx="24" fill="url(#collapsedGlow)"/>
+  <rect x="440" y="170" width="320" height="360" rx="24" fill="url(#summaryGlow)"/>
+  <rect x="820" y="170" width="320" height="360" rx="24" fill="url(#expandedGlow)"/>
 
-  <text x="104" y="214" fill="#93C5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">COLLAPSED</text>
-  <text x="104" y="250" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Minimal live signal</text>
-  <text x="104" y="284" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">One compact line for the active step.</text>
-  <text x="104" y="324" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│ Thinking ✓ Tests passed after</text>
-  <text x="104" y="346" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│ tightening summary coverage. ·</text>
-  <text x="104" y="400" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Lowest visual noise</text>
-  <text x="104" y="428" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Best while thinking is active</text>
-  <text x="104" y="456" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Strong fit for narrow terminals</text>
+  <text x="92" y="214" fill="#93C5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">COLLAPSED</text>
+  <text x="92" y="248" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Minimal live signal</text>
+  <text x="92" y="282" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">One compact line for</text>
+  <text x="92" y="304" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">the active step.</text>
+  <text x="92" y="344" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│ Thinking ✓ Tests passed</text>
+  <text x="92" y="364" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│ after tightening</text>
+  <text x="92" y="384" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│ summary coverage. ·</text>
+  <text x="92" y="430" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">• Lowest visual noise</text>
+  <text x="92" y="456" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">• Best while thinking</text>
+  <text x="92" y="478" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">  is active</text>
+  <text x="92" y="504" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">• Strong fit for narrow</text>
+  <text x="92" y="526" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">  terminals</text>
 
-  <text x="482" y="214" fill="#C4B5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">SUMMARY</text>
-  <text x="482" y="250" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Reasoning flow</text>
-  <text x="482" y="280" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">at a glance</text>
-  <text x="482" y="314" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">One concise line per derived step,</text>
-  <text x="482" y="336" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">kept in transcript order.</text>
-  <text x="482" y="378" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ◫ Inspect parse.ts and render.ts.</text>
-  <text x="482" y="400" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ↔ Compare collapsed and summary</text>
-  <text x="482" y="422" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  selection paths.</text>
-  <text x="482" y="444" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">└─ ✓ Build passed after typing fix.</text>
-  <text x="482" y="486" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Good default scan view</text>
-  <text x="482" y="514" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Stable deterministic summaries</text>
+  <text x="472" y="214" fill="#C4B5FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">SUMMARY</text>
+  <text x="472" y="248" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Reasoning flow</text>
+  <text x="472" y="278" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">at a glance</text>
+  <text x="472" y="312" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">One concise line per</text>
+  <text x="472" y="334" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">derived step, kept in</text>
+  <text x="472" y="356" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">transcript order.</text>
+  <text x="472" y="392" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">├─ ◫ Inspect parse.ts and</text>
+  <text x="472" y="412" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  render.ts.</text>
+  <text x="472" y="432" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">├─ ↔ Compare collapsed</text>
+  <text x="472" y="452" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  and summary selection</text>
+  <text x="472" y="472" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  paths.</text>
+  <text x="472" y="492" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">└─ ✓ Build passed after</text>
+  <text x="472" y="512" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">   typing fix.</text>
+  <text x="472" y="538" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">• Good default scan view</text>
+  <text x="472" y="564" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">• Stable deterministic</text>
+  <text x="472" y="586" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">  summaries</text>
 
-  <text x="860" y="214" fill="#86EFAC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">EXPANDED</text>
-  <text x="860" y="250" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Full detail,</text>
-  <text x="860" y="280" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">clean terminal layout</text>
-  <text x="860" y="314" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">Show the whole step body with</text>
-  <text x="860" y="336" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17">wrapping and ANSI-safe rendering.</text>
-  <text x="860" y="378" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">├─ ◫ Inspect parse.ts and render.ts.</text>
-  <text x="860" y="400" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  Compare candidate extraction and</text>
-  <text x="860" y="422" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14">│  summary rendering side by side.</text>
-  <text x="860" y="486" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• Best for deep debugging</text>
-  <text x="860" y="514" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">• No web-style chrome</text>
+  <text x="852" y="214" fill="#86EFAC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">EXPANDED</text>
+  <text x="852" y="248" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Full detail</text>
+  <text x="852" y="278" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">terminal-native</text>
+  <text x="852" y="308" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">layout</text>
+  <text x="852" y="342" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">Show the whole step body</text>
+  <text x="852" y="364" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">with wrapping and ANSI-safe</text>
+  <text x="852" y="386" fill="#94A3B8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">rendering.</text>
+  <text x="852" y="422" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">├─ ◫ Inspect parse.ts and</text>
+  <text x="852" y="442" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  render.ts.</text>
+  <text x="852" y="462" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  Compare candidate</text>
+  <text x="852" y="482" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  extraction and summary</text>
+  <text x="852" y="502" fill="#E2E8F0" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13">│  rendering side by side.</text>
+  <text x="852" y="538" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">• Best for deep debugging</text>
+  <text x="852" y="564" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">• No web-style chrome</text>
 </svg>

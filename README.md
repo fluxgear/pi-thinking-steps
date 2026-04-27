@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.6"><img alt="release" src="https://img.shields.io/badge/release-v1.0.6-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.7"><img alt="release" src="https://img.shields.io/badge/release-v1.0.7-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -195,6 +195,9 @@ That means:
 - Pi upgrades should be treated as deliberate compatibility work
 - the pinned Pi package versions and `package-lock.json` matter
 - `npm test` is part of the maintenance contract, not an optional extra
+- if patch install fails during `session_start`, the current session stays on Pi's native thinking renderer and live mode switching is disabled for that degraded session
+- project/global default saves and clears remain available during a degraded session, but they apply only to future compatible sessions
+- if `session_shutdown` is missed, a later same-scope extension instance can still release the retained patch during shutdown
 
 The current package is pinned to Pi package version `0.69.0` in `package.json`.
 

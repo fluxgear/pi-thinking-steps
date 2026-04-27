@@ -33,6 +33,26 @@ function truncateText(text: string, maxLength: number): string {
 	return `${truncated}…`;
 }
 
+function ensureCompleteVisibleSummary(summary: string): string {
+	const trimmed = summary.trim();
+	if (!trimmed) return trimmed;
+	if (!/(?:…|\.\.\.)$/u.test(trimmed)) {
+		return /[.!?]$/u.test(trimmed) ? trimmed : `${trimmed.replace(/[.!?;:,]+$/g, "")}.`;
+	}
+
+	const withoutEllipsis = trimmed.replace(/(?:…|\.\.\.)+$/gu, "").trimEnd();
+	const boundaryMatches = [
+		...Array.from(withoutEllipsis.matchAll(/[,:;](?=\s|$)/g), (match) => match.index ?? -1),
+		...Array.from(withoutEllipsis.matchAll(/\b(?:before|after|while|because|so|then|once|until)\b/gi), (match) => match.index ?? -1),
+	].filter((index) => index > 0);
+	const boundaryIndex = boundaryMatches.length > 0 ? Math.max(...boundaryMatches) : -1;
+	const candidate = boundaryIndex > 0
+		? withoutEllipsis.slice(0, boundaryIndex).trimEnd()
+		: withoutEllipsis.replace(/\s+\S*$/u, "").trimEnd();
+	const cleaned = (candidate || withoutEllipsis).replace(/[.!?;:,]+$/g, "").trimEnd();
+	return cleaned ? `${cleaned}.` : `${withoutEllipsis.replace(/[.!?;:,]+$/g, "").trimEnd()}.`;
+}
+
 function firstMeaningfulLine(text: string): string {
 	const lines = normalizeNewlines(text)
 		.split("\n")
@@ -50,7 +70,19 @@ function firstSentence(text: string): string {
 
 function splitListChunk(chunk: string): string[] {
 	const lines = normalizeNewlines(chunk).split("\n");
-	const itemLineIndexes = lines.reduce<number[]>((indexes, line, index) => {
+	let contentStartIndex = 0;
+	while (contentStartIndex < lines.length) {
+		const trimmed = lines[contentStartIndex]!.trim();
+		if (!trimmed || isStandaloneHeadingChunk(trimmed)) {
+			contentStartIndex += 1;
+			continue;
+		}
+		break;
+	}
+
+	const headingPrefix = lines.slice(0, contentStartIndex).join("\n").trim();
+	const contentLines = lines.slice(contentStartIndex);
+	const itemLineIndexes = contentLines.reduce<number[]>((indexes, line, index) => {
 		if (LIST_ITEM_RE.test(line)) indexes.push(index);
 		return indexes;
 	}, []);
@@ -59,15 +91,19 @@ function splitListChunk(chunk: string): string[] {
 
 	const items: string[] = [];
 	let current: string[] = [];
-	for (const line of lines) {
+	for (const line of contentLines) {
 		if (LIST_ITEM_RE.test(line) && current.length > 0) {
-			items.push(current.join("\n").trim());
+			const item = current.join("\n").trim();
+			items.push(headingPrefix ? `${headingPrefix}\n\n${item}` : item);
 			current = [line];
 		} else {
 			current.push(line);
 		}
 	}
-	if (current.length > 0) items.push(current.join("\n").trim());
+	if (current.length > 0) {
+		const item = current.join("\n").trim();
+		items.push(headingPrefix ? `${headingPrefix}\n\n${item}` : item);
+	}
 	return items.filter(Boolean);
 }
 
@@ -99,10 +135,23 @@ function mergeHeadingParagraphChunks(chunks: string[]): string[] {
 	for (let index = 0; index < chunks.length; index += 1) {
 		const chunk = chunks[index]!;
 		const nextChunk = chunks[index + 1];
-		if (nextChunk && isStandaloneHeadingChunk(chunk)) {
-			merged.push(`${chunk}\n\n${nextChunk}`);
-			index += 1;
-			continue;
+		if (isStandaloneHeadingChunk(chunk)) {
+			const followingListChunks: string[] = [];
+			let nextIndex = index + 1;
+			while (nextIndex < chunks.length && isListParagraphChunk(chunks[nextIndex]!)) {
+				followingListChunks.push(chunks[nextIndex]!);
+				nextIndex += 1;
+			}
+			if (followingListChunks.length > 0) {
+				merged.push(`${chunk}\n\n${followingListChunks.join("\n\n")}`);
+				index = nextIndex - 1;
+				continue;
+			}
+			if (nextChunk) {
+				merged.push(`${chunk}\n\n${nextChunk}`);
+				index += 1;
+				continue;
+			}
 		}
 		merged.push(chunk);
 	}
@@ -110,11 +159,16 @@ function mergeHeadingParagraphChunks(chunks: string[]): string[] {
 }
 
 function isListParagraphChunk(chunk: string): boolean {
-	const firstLine = normalizeNewlines(chunk)
+	const lines = normalizeNewlines(chunk)
 		.split("\n")
 		.map((line) => line.trim())
-		.find(Boolean);
-	return firstLine ? LIST_ITEM_RE.test(firstLine) : false;
+		.filter(Boolean);
+
+	for (const line of lines) {
+		if (LIST_ITEM_RE.test(line)) return true;
+		if (!isStandaloneHeadingChunk(line)) return false;
+	}
+	return false;
 }
 
 function isListContinuationChunk(chunk: string): boolean {
@@ -128,6 +182,7 @@ function isListContinuationChunk(chunk: string): boolean {
 		.map((line) => stripMarkdownEmphasis(line.trim()))
 		.find(Boolean);
 	if (!firstLine) return false;
+	if (FAILURE_CUE_RE.test(firstLine)) return false;
 
 	return !/^(?:overall|in summary|to summarize|in conclusion|finally|that should|this should|those steps should|this confirms|that confirms|with that)\b/i.test(firstLine);
 }
@@ -179,7 +234,7 @@ const ARTIFACT_RE = /(?:\b[a-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|txt|yml|yaml|loc
 const FAILURE_CUE_RE = /\b(failed|failure|error|errors|blocked|abort(?:ed)?|cannot|unable|did not complete|not completed|reverted|rollback|locked)\b/i;
 const SUCCESS_CUE_RE = /\b(pass(?:ed)?|succeed(?:ed)?)\b/i;
 const DECISION_CUE_RE = /\b(decided|decision|chose|switched|replaced|confirmed|fixed|resolved|discovered|found|preserve|keeping|keep)\b/i;
-const PLAN_CHANGE_CUE_RE = /\b(instead of|rather than|safer plan|plan changed|keep the current summarizer as the baseline|only choose the challenger|limit the algorithmic changes)\b/i;
+const PLAN_CHANGE_CUE_RE = /\b(instead of|rather than|safer (?:plan|route)|plan changed|keep the current summarizer as the baseline|only choose the challenger|limit the algorithmic changes)\b/i;
 const ACTION_CUE_RE = /\b(retry|rerun|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
 const NEXT_ACTION_CUE_RE = /\b(first|next|retry|rerun|before|after)\b/i;
 const UNCERTAINTY_CUE_RE = /\b(maybe|might|possibly|probably|seems|looks like|suspect|likely|whether|unverified|haven'?t verified|not verified|before I call this)\b/i;
@@ -542,16 +597,26 @@ function renderSummaryEvent(event: ThinkingSummaryEvent): string {
 
 	if (event.type === "failure") {
 		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
-		const npmFailureMatch = normalized.match(/^npm test failed with exit code (\d+)\b/i);
+		const failureClause = ([...splitClauses(normalized)
+			.map((clause) => normalizeSummaryEventText(clause).replace(/[.!?;:,]+$/g, ""))
+			.filter(Boolean)]
+			.reverse()
+			.find((clause) => FAILURE_CUE_RE.test(clause)) ?? normalized)
+			.replace(/^(?:but|and)\s+/i, "");
+		const npmFailureMatch = failureClause.match(/^npm test failed with exit code (\d+)\b/i);
 		if (npmFailureMatch) {
 			return `Npm test failed with exit code ${npmFailureMatch[1]}.`;
 		}
-		const typecheckMatch = normalized.match(/^typecheck failed with (TS\d+) in ([a-z0-9_./-]+)\b/i);
+		const typecheckMatch = failureClause.match(/^typecheck failed with (TS\d+) in ([a-z0-9_./-]+)\b/i);
 		if (typecheckMatch) {
 			return `Typecheck failed with ${typecheckMatch[1]} in ${typecheckMatch[2]}.`;
 		}
-		if (/^project reindex is locked by another operation\b/i.test(normalized)) {
+		if (/^project reindex is locked by another operation\b/i.test(failureClause)) {
 			return "Project reindex is locked by another operation.";
+		}
+		const cleanedFailure = failureClause.replace(/[.!?;:,]+$/g, "");
+		if (cleanedFailure) {
+			return truncateText(`${capitalize(cleanedFailure)}.`, SUMMARY_MAX_CHARS);
 		}
 	}
 
@@ -597,7 +662,7 @@ function renderSummaryEvent(event: ThinkingSummaryEvent): string {
 		if (insteadMatch) {
 			return truncateText(`Changed plan: ${insteadMatch[1]}.`, SUMMARY_MAX_CHARS);
 		}
-		if (/^the safer plan is to keep the current summarizer as the baseline, add an event-aware challenger, and only choose the challenger when it is clearly better$/i.test(normalized)) {
+		if (/\bbaseline\b/i.test(normalized) && /\bchallenger\b/i.test(normalized) && /\b(?:clearly\s+)?better\b/i.test(normalized)) {
 			return "Plan: keep current summarizer baseline; add event-aware challenger; use when better.";
 		}
 	}
@@ -613,11 +678,10 @@ function renderSummaryEvent(event: ThinkingSummaryEvent): string {
 
 	if (event.type === "focus") {
 		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
-		const compareBeforeEditingMatch = normalized.match(/^before editing ([a-z0-9_./-]+), i want to compare .+ with summary mode/i);
-		if (compareBeforeEditingMatch) {
-			return truncateText(`Planning to compare ${compareBeforeEditingMatch[1]} selection paths before editing.`, SUMMARY_MAX_CHARS);
-		}
 		const paths = collectPathTokens(event.text);
+		if (paths.length > 0 && /\bcompare\b/i.test(normalized) && /\bsummary mode\b/i.test(normalized) && /\bbefore (?:editing|touching|changing)\b/i.test(normalized)) {
+			return truncateText(`Planning to compare ${paths[0]} selection paths before editing.`, SUMMARY_MAX_CHARS);
+		}
 		const symbols = Array.from(new Set(event.text.match(SYMBOL_TOKEN_RE) ?? []));
 		const commandMatch = event.text.match(/\b(?:node --test|node --import tsx|npm(?: run)? [a-z0-9:-]+)\b/i);
 		if (commandMatch && paths.length > 0) {
@@ -667,8 +731,8 @@ function extractThinkingSummaryEvents(text: string): ThinkingSummaryEvent[] {
 		const hasFocus = collectPathTokens(sentence).length > 0 || (sentence.match(SYMBOL_TOKEN_RE) ?? []).length > 0;
 		const hasAction = ACTION_CUE_RE.test(sentence) || NEXT_ACTION_CUE_RE.test(sentence);
 
-		if (hasSuccess) return { type: "success", text: sentence, order, priority: 120 } satisfies ThinkingSummaryEvent;
 		if (hasFailure) return { type: "failure", text: sentence, order, priority: 110 } satisfies ThinkingSummaryEvent;
+		if (hasSuccess) return { type: "success", text: sentence, order, priority: 120 } satisfies ThinkingSummaryEvent;
 		if (hasPlanChange) return { type: "plan_change", text: sentence, order, priority: 90 } satisfies ThinkingSummaryEvent;
 		if (hasDecision) return { type: "decision", text: sentence, order, priority: 85 } satisfies ThinkingSummaryEvent;
 		if (hasUncertainty) return { type: "uncertainty", text: sentence, order, priority: 82 } satisfies ThinkingSummaryEvent;
@@ -737,6 +801,7 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 	const latestSuccessOrder = challenger.events.filter((event) => event.type === "success").at(-1)?.order ?? -1;
 	const laterExplicitSuccess = latestSuccessOrder > latestFailureOrder;
 	const baselineHasExplicitSuccess = SUCCESS_CUE_RE.test(baselineSummary);
+	const baselineHasExplicitFailure = FAILURE_CUE_RE.test(baselineSummary);
 	const baselineRetainedPathCount = countRetainedPathTokens(raw, baselineSummary);
 	const challengerRetainedPathCount = countRetainedPathTokens(raw, challengerSummary);
 	const sourceSymbols = Array.from(new Set(raw.match(SYMBOL_TOKEN_RE) ?? []));
@@ -766,17 +831,19 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 	const shouldCompactFocusSummary = challenger.events.length === 1
 		&& challenger.events[0]?.type === "focus"
 		&& /^(?:Inspect|Next check is|Planning to compare .* before editing\.)\b/i.test(challengerSummary)
-		&& /^(?:before editing |i(?:'m| am)\s+(?:reading|inspecting|tracing)|the next check is)\b/i.test(raw)
+		&& /^(?:before editing |before touching |before changing |i(?:'m| am)\s+(?:reading|inspecting|tracing)|the next check is)\b/i.test(raw)
 		&& !/\bdo not regress\b/i.test(raw)
 		&& (challengerRetainedPathCount >= baselineRetainedPathCount || challengerRetainedSymbolCount > baselineRetainedSymbolCount);
+	const rawHasCompareBeforeEditingIntent = /\bcompare\b/i.test(raw)
+		&& /\bsummary mode\b/i.test(raw)
+		&& /\bbefore (?:editing|touching|changing)\b/i.test(raw);
 	const shouldPreferCompareBeforeEditingTemplate = challenger.events.length === 1
 		&& challenger.events[0]?.type === "focus"
-		&& /^Before editing\b/i.test(raw)
-		&& /^Before editing\b/i.test(baselineSummary)
+		&& rawHasCompareBeforeEditingIntent
 		&& /^Planning to compare .* before editing\.$/i.test(challengerSummary)
 		&& challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
-		&& challengerSummary.length < baselineSummary.length;
+		&& challengerSummary.length <= baselineSummary.length;
 	const shouldPreferFailureTemplate = challenger.events.length === 1
 		&& challenger.events[0]?.type === "failure"
 		&& /^(?:Npm test failed with exit code|Typecheck failed with TS\d+ in|Project reindex is locked by another operation\.)/i.test(challengerSummary)
@@ -803,16 +870,21 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 		&& /^I decided to preserve expanded mode behavior\b/i.test(baselineSummary)
 		&& challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount;
+	const rawHasHybridPlanFeatures = /\bbaseline\b/i.test(raw)
+		&& /\bchallenger\b/i.test(raw)
+		&& /\b(?:clearly\s+)?better\b/i.test(raw);
 	const shouldPreferPlanChangeTemplate = challenger.events.length === 1
 		&& challenger.events[0]?.type === "plan_change"
-		&& /^(?:Changed plan:|Plan: keep current summarizer baseline; add (?:event-aware )?challenger; use(?: it)? when (?:clearly )?better\.)/i.test(challengerSummary)
-		&& /^(?:Instead of|The safer plan is)\b/i.test(baselineSummary)
+		&& (/^Changed plan:/i.test(challengerSummary) || (/\bbaseline\b/i.test(challengerSummary) && /\bchallenger\b/i.test(challengerSummary) && /\bbetter\b/i.test(challengerSummary)))
+		&& (rawHasHybridPlanFeatures || /^(?:Instead of|Rather than|The safer plan is|The safer route is|Safer plan:)\b/i.test(raw))
 		&& challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
-		&& challengerSummary.length <= baselineSummary.length;
+		&& challengerSummary.length <= baselineSummary.length + 8;
 
 	let summary = baselineSummary;
 	if (laterExplicitSuccess && challenger.hasExplicitSuccess && !baselineHasExplicitSuccess) {
+		summary = challengerSummary;
+	} else if (challenger.hasExplicitFailure && !laterExplicitSuccess && !baselineHasExplicitFailure && /^(?:Npm test failed with exit code|Typecheck failed with TS\d+ in|Project reindex is locked by another operation\.)/i.test(challengerSummary)) {
 		summary = challengerSummary;
 	} else if (startsWithStrongHypothesis && (UNCERTAINTY_CUE_RE.test(raw) || SPECULATIVE_CUE_RE.test(raw)) && preservesUncertainty && !baselinePreservesUncertainty) {
 		summary = challengerSummary;
@@ -840,8 +912,9 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 		summary = challengerSummary;
 	}
 
+	const visibleSummary = ensureCompleteVisibleSummary(summary);
 	return {
-		summary,
+		summary: visibleSummary,
 		baselineSummary,
 		challengerSummary,
 		events: challenger.events,

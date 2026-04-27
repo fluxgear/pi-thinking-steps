@@ -32,6 +32,13 @@ describe("summarizer challenger regressions", () => {
 		assert.doesNotMatch(summary, /^Typecheck failed/i);
 	});
 
+	it("treats a mixed success-failure sentence as an explicit failure", () => {
+		const summary = summarizeThinkingText(
+			"npm run build passed after updating parse.ts, but npm test failed with exit code 1.",
+		);
+		assert.equal(summary, "Npm test failed with exit code 1.");
+	});
+
 	it("preserves underscore-heavy file paths during summary compression", () => {
 		const summary = summarizeThinkingText(
 			"Read prompts/pi_thinking_steps_summarizer_improvement_prompt.md before editing parse.ts.",
@@ -65,6 +72,14 @@ describe("unchanged semantic-quality regressions", () => {
 		assert.match(summary, /Planning to compare render\.ts selection paths before editing/i);
 		assert.doesNotMatch(summary, /^Inspect render\.ts\.?$/i);
 		assert.doesNotMatch(summary, /^Before editing render\.ts, I want to compare/i);
+	});
+
+	it("handles paraphrased compare-before-editing intent without falling back to a literal setup clause", () => {
+		const summary = summarizeThinkingText(
+			"Before touching render.ts, I need to compare its collapsed selection path with summary mode so I do not break either view.",
+		);
+		assert.match(summary, /Planning to compare render\.ts selection paths before editing/i);
+		assert.doesNotMatch(summary, /^Before touching render\.ts/i);
 	});
 
 	it("compacts pure file focus into concise inspect phrasing", () => {
@@ -150,6 +165,16 @@ describe("unchanged semantic-quality regressions", () => {
 		assert.match(summary, /event-aware challenger/i);
 		assert.match(summary, /better/i);
 		assert.doesNotMatch(summary, /^The safer plan is to keep the current summarizer as the baseline/i);
+	});
+
+	it("handles paraphrased hybrid baseline-plus-challenger plans with the same chooser semantics", () => {
+		const summary = summarizeThinkingText(
+			"The safer route is to keep the current summarizer as the baseline, add an event-aware challenger, and only pick it when the challenger is clearly better.",
+		);
+		assert.match(summary, /current summarizer.*baseline|baseline.*current summarizer/i);
+		assert.match(summary, /event-aware challenger/i);
+		assert.match(summary, /better/i);
+		assert.doesNotMatch(summary, /^The safer route is to keep the current summarizer as the baseline/i);
 	});
 
 	it("renders npm test failures with concise command-specific wording", () => {
@@ -276,6 +301,30 @@ describe("summary mode top-N selection", () => {
 		assert.match(joined, /Npm test failed with exit code 1/i);
 		assert.match(joined, /Decided to keep the existing logical step splitting/i);
 		assert.doesNotMatch(joined, /Inspect alpha\.ts for context/i);
+	});
+
+	it("keeps the active step visible when more than five summary steps exist", () => {
+		const steps = deriveThinkingSteps([
+			{ contentIndex: 0, text: "Inspect alpha.ts for context." },
+			{ contentIndex: 1, text: "Inspect beta.ts for context." },
+			{ contentIndex: 2, text: "Inspect gamma.ts for context." },
+			{ contentIndex: 3, text: "Inspect delta.ts for context." },
+			{ contentIndex: 4, text: "Inspect epsilon.ts for context." },
+			{ contentIndex: 5, text: "Inspect zeta.ts for context." },
+		]);
+
+		const lines = renderThinkingStepsLines(theme, 120, {
+			mode: "summary",
+			steps,
+			activeStepId: steps[0]?.id,
+			isActive: false,
+		});
+
+		const joined = stripAnsi(lines.join("\n"));
+		const stepLines = lines.filter((line) => /^(├─|└─)/.test(stripAnsi(line)));
+		assert.equal(stepLines.length, 5);
+		assert.match(joined, /Inspect alpha\.ts for context/i);
+		assert.doesNotMatch(joined, /Inspect beta\.ts for context/i);
 	});
 
 	it("restores chronological order after selecting the strongest summary steps", () => {

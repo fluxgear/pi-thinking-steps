@@ -196,14 +196,25 @@ function reportPatchError(ctx: ExtensionContext, error: unknown): void {
 
 export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	let sessionScopeKey = getCurrentThinkingScopeKey();
+	const degradedSessionScopes = new Set<string>();
 	const setSessionScopeKey = (scopeKey: string): string => {
 		sessionScopeKey = scopeKey;
 		setCurrentThinkingScopeKey(scopeKey);
 		return sessionScopeKey;
 	};
+	const markSessionDegraded = (scopeKey: string, degraded: boolean): void => {
+		if (degraded) {
+			degradedSessionScopes.add(scopeKey);
+			return;
+		}
+		degradedSessionScopes.delete(scopeKey);
+	};
+	const isSessionDegraded = (scopeKey: string): boolean => degradedSessionScopes.has(scopeKey);
+	const degradedSessionMessage = (): string => "Thinking steps is using Pi's native thinking renderer for this session; live mode switching is disabled.";
+	const futureCompatibleSessionMessage = (scope: PersistedThinkingStepsPreferenceScope, action: "saved" | "cleared"): string => `${action === "saved" ? "Saved" : "Cleared"} ${scope} thinking view default for future compatible sessions; the current session is using Pi's native thinking renderer.`;
 
 	pi.registerCommand("thinking-steps", {
-		description: "Switch thinking view or set/clear project/global defaults", 
+		description: "Switch thinking view or set/clear project/global defaults",
 		getArgumentCompletions: thinkingModeCompletions,
 		handler: async (args, ctx) => {
 			const action = parseCommandAction(args);
@@ -212,11 +223,17 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+			const degraded = isSessionDegraded(ctx.cwd);
 			if (action.type === "clear") {
 				try {
 					await clearThinkingStepsModePreference(action.scope, ctx.cwd);
 				} catch (error) {
 					reportPersistenceError(ctx, error);
+					return;
+				}
+
+				if (degraded) {
+					notifyUser(ctx, futureCompatibleSessionMessage(action.scope, "cleared"), "info");
 					return;
 				}
 
@@ -239,6 +256,15 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 				}
 			}
 
+			if (degraded) {
+				if (action.scope === "session") {
+					notifyUser(ctx, degradedSessionMessage(), "warning");
+					return;
+				}
+				notifyUser(ctx, futureCompatibleSessionMessage(action.scope, "saved"), "info");
+				return;
+			}
+
 			applyMode(pi, ctx, selectedMode, { announceScope: action.scope });
 		},
 	});
@@ -246,6 +272,10 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	pi.registerShortcut(Key.alt("t"), {
 		description: "Cycle thinking view (collapsed, summary, expanded)",
 		handler: async (ctx) => {
+			if (isSessionDegraded(ctx.cwd)) {
+				notifyUser(ctx, degradedSessionMessage(), "warning");
+				return;
+			}
 			const nextMode = cycleMode(getThinkingStepsMode(ctx.cwd));
 			applyMode(pi, ctx, nextMode, { announceScope: "session" });
 		},
@@ -256,8 +286,12 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		clearActiveThinkingState(undefined, activeScopeKey);
 		try {
 			registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch());
+			markSessionDegraded(activeScopeKey, false);
 		} catch (error) {
+			markSessionDegraded(activeScopeKey, true);
 			reportPatchError(ctx, error);
+			notifyUser(ctx, degradedSessionMessage(), "warning");
+			return;
 		}
 
 		const restoredMode = await restoreMode(ctx);
@@ -314,6 +348,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		const activeScopeKey = setSessionScopeKey(ctx.cwd);
 		clearActiveThinkingState(undefined, activeScopeKey);
+		markSessionDegraded(activeScopeKey, false);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("thinking-steps", undefined);
 		}
