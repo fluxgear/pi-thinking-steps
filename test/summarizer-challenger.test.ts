@@ -39,6 +39,30 @@ describe("summarizer challenger regressions", () => {
 		assert.equal(summary, "Npm test failed with exit code 1.");
 	});
 
+	it("does not treat verification wording as an explicit success", () => {
+		const summary = summarizeThinkingText(
+			"Typecheck failed. I should verify whether npm test passed after the fix.",
+		);
+		assert.match(summary, /Typecheck failed/i);
+		assert.doesNotMatch(summary, /Tests passed|Npm test passed/i);
+	});
+
+	it("does not treat uncertain failure wording as an explicit failure", () => {
+		const summary = summarizeThinkingText(
+			"I am not sure whether the test failed. I should inspect parse.ts next.",
+		);
+		assert.match(summary, /Checking whether|Inspect parse\.ts/i);
+		assert.doesNotMatch(summary, /^I am not sure whether the test failed\.$/i);
+	});
+
+	it("does not treat noun pass wording as an explicit success", () => {
+		const summary = summarizeThinkingText(
+			"On the first pass, inspect parse.ts and render.ts before editing.",
+		);
+		assert.match(summary, /Inspect parse\.ts and render\.ts|parse\.ts/i);
+		assert.doesNotMatch(summary, /passed|succeeded/i);
+	});
+
 	it("preserves underscore-heavy file paths during summary compression", () => {
 		const summary = summarizeThinkingText(
 			"Read prompts/pi_thinking_steps_summarizer_improvement_prompt.md before editing parse.ts.",
@@ -177,6 +201,16 @@ describe("unchanged semantic-quality regressions", () => {
 		assert.doesNotMatch(summary, /^The safer route is to keep the current summarizer as the baseline/i);
 	});
 
+	it("handles safer-approach hybrid plans without relying on exact safer-plan wording", () => {
+		const summary = summarizeThinkingText(
+			"The safer approach is to keep the current summarizer as baseline, add an event-aware challenger, and only use it when that challenger clearly wins.",
+		);
+		assert.match(summary, /current summarizer.*baseline|baseline.*current summarizer/i);
+		assert.match(summary, /event-aware challenger/i);
+		assert.match(summary, /better|wins/i);
+		assert.doesNotMatch(summary, /^The safer approach is to keep the current summarizer as baseline/i);
+	});
+
 	it("renders npm test failures with concise command-specific wording", () => {
 		const summary = summarizeThinkingText(
 			"npm test failed with exit code 1 while validating the summarizer changes.",
@@ -238,6 +272,25 @@ describe("collapsed selection priority", () => {
 		const joined = stripAnsi(lines.join("\n"));
 		assert.match(joined, /Build passed after updating type|Npm run build passed after updating the type/i);
 		assert.doesNotMatch(joined, /Typecheck failed with TS2322 in parse\.ts/i);
+	});
+
+	it("returns to the newest failure after an intervening success", () => {
+		const steps = deriveThinkingSteps([
+			{ contentIndex: 0, text: "npm test failed with exit code 1." },
+			{ contentIndex: 1, text: "npm run build passed after updating the type." },
+			{ contentIndex: 2, text: "Typecheck failed with TS2322 in render.ts." },
+		]);
+
+		const lines = renderThinkingStepsLines(theme, 120, {
+			mode: "collapsed",
+			steps,
+			isActive: false,
+			nowMs: 0,
+		});
+
+		const joined = stripAnsi(lines.join("\n"));
+		assert.match(joined, /Typecheck failed with TS2322 in render\.ts/i);
+		assert.doesNotMatch(joined, /Build passed after updating type|Npm run build passed after updating the type/i);
 	});
 });
 
@@ -353,6 +406,27 @@ describe("summary mode top-N selection", () => {
 		assert.ok(decisionIndex !== -1 && failureIndex !== -1 && successIndex !== -1);
 		assert.ok(decisionIndex < failureIndex);
 		assert.ok(failureIndex < successIndex);
+	});
+
+	it("prefers the newest failure over a stale success after an earlier failure", () => {
+		const steps = deriveThinkingSteps([
+			{ contentIndex: 0, text: "Inspect alpha.ts for context." },
+			{ contentIndex: 1, text: "npm test failed with exit code 1." },
+			{ contentIndex: 2, text: "npm run build passed after updating the type." },
+			{ contentIndex: 3, text: "Inspect beta.ts for context." },
+			{ contentIndex: 4, text: "Typecheck failed with TS2322 in render.ts." },
+			{ contentIndex: 5, text: "I decided to keep the renderer priority ordering." },
+		]);
+
+		const lines = renderThinkingStepsLines(theme, 120, {
+			mode: "summary",
+			steps,
+			isActive: false,
+		});
+
+		const joined = stripAnsi(lines.join("\n"));
+		assert.match(joined, /Typecheck failed with TS2322 in render\.ts/i);
+		assert.doesNotMatch(joined, /Build passed after updating type|Npm run build passed after updating the type/i);
 	});
 });
 

@@ -18,6 +18,7 @@ interface ThinkingStepsGlobalState {
 	activeByScopeKey: Record<string, Record<string, ThinkingActiveEntry>>;
 	lastActiveByScopeKey: Record<string, ActiveThinkingState>;
 	refreshToggleByScope: Record<string, boolean>;
+	patchReleases: PatchRelease[];
 	patchReleasesByScope: Record<string, PatchRelease[]>;
 	patchRefCount: number;
 	patchCleanup?: PatchCleanup | undefined;
@@ -32,6 +33,7 @@ interface LegacyThinkingStepsGlobalState {
 	activeByScopeKey?: unknown;
 	lastActiveByScopeKey?: unknown;
 	refreshToggleByScope?: unknown;
+	patchReleases?: unknown;
 	patchReleasesByScope?: unknown;
 	patchRefCount?: unknown;
 	patchCleanup?: unknown;
@@ -108,9 +110,13 @@ function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinking
 	const refreshToggleByScope: Record<string, boolean> = isRecord(state.refreshToggleByScope)
 		? Object.fromEntries(Object.entries(state.refreshToggleByScope).map(([scopeKey, enabled]) => [normalizeThinkingScopeKey(scopeKey), enabled === true]))
 		: {};
-	const patchReleasesByScope: Record<string, PatchRelease[]> = isRecord(state.patchReleasesByScope)
+	const legacyPatchReleasesByScope: Record<string, PatchRelease[]> = isRecord(state.patchReleasesByScope)
 		? Object.fromEntries(Object.entries(state.patchReleasesByScope).map(([scopeKey, releases]) => [normalizeThinkingScopeKey(scopeKey), Array.isArray(releases) ? releases as PatchRelease[] : []]))
 		: {};
+	const patchReleases: PatchRelease[] = Array.isArray(state.patchReleases)
+		? state.patchReleases as PatchRelease[]
+		: Object.values(legacyPatchReleasesByScope).flat();
+	const patchReleasesByScope: Record<string, PatchRelease[]> = {};
 
 	for (const scopeKey of Object.keys(modeByScopeKey)) {
 		activeByScopeKey[scopeKey] ??= {};
@@ -133,6 +139,7 @@ function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinking
 	state.activeByScopeKey = activeByScopeKey;
 	state.lastActiveByScopeKey = lastActiveByScopeKey;
 	state.refreshToggleByScope = refreshToggleByScope;
+	state.patchReleases = patchReleases;
 	state.patchReleasesByScope = patchReleasesByScope;
 	state.patchRefCount = typeof state.patchRefCount === "number" && Number.isFinite(state.patchRefCount)
 		? state.patchRefCount
@@ -153,6 +160,7 @@ const globalState = (() => {
 		activeByScopeKey: { [DEFAULT_SCOPE_KEY]: {} },
 		lastActiveByScopeKey: { [DEFAULT_SCOPE_KEY]: { active: false } },
 		refreshToggleByScope: {},
+		patchReleases: [],
 		patchReleasesByScope: {},
 		patchRefCount: 0,
 	};
@@ -172,9 +180,6 @@ function ensureScopeState(scopeKey: string): void {
 	}
 	if (!(scopeKey in globalState.refreshToggleByScope)) {
 		globalState.refreshToggleByScope[scopeKey] = false;
-	}
-	if (!(scopeKey in globalState.patchReleasesByScope)) {
-		globalState.patchReleasesByScope[scopeKey] = [];
 	}
 }
 
@@ -265,16 +270,12 @@ export function nextThinkingRefreshLabel(label: string, scopeKey?: string): stri
 	return useInvisibleSuffix ? `${label}${LABEL_REFRESH_SUFFIX}` : label;
 }
 
-export function registerThinkingPatchRelease(scopeKey: string, release: PatchRelease): void {
-	const normalizedScopeKey = normalizeThinkingScopeKey(scopeKey);
-	ensureScopeState(normalizedScopeKey);
-	globalState.patchReleasesByScope[normalizedScopeKey]!.push(release);
+export function registerThinkingPatchRelease(_scopeKey: string, release: PatchRelease): void {
+	globalState.patchReleases.push(release);
 }
 
-export function takeThinkingPatchRelease(scopeKey: string): PatchRelease | undefined {
-	const normalizedScopeKey = normalizeThinkingScopeKey(scopeKey);
-	ensureScopeState(normalizedScopeKey);
-	return globalState.patchReleasesByScope[normalizedScopeKey]!.pop();
+export function takeThinkingPatchRelease(_scopeKey: string): PatchRelease | undefined {
+	return globalState.patchReleases.pop();
 }
 
 export function resetThinkingStepsViewState(scopeKey?: string): void {

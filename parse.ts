@@ -147,7 +147,7 @@ function mergeHeadingParagraphChunks(chunks: string[]): string[] {
 				index = nextIndex - 1;
 				continue;
 			}
-			if (nextChunk) {
+			if (nextChunk && !isStandaloneHeadingChunk(nextChunk)) {
 				merged.push(`${chunk}\n\n${nextChunk}`);
 				index += 1;
 				continue;
@@ -234,7 +234,7 @@ const ARTIFACT_RE = /(?:\b[a-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|txt|yml|yaml|loc
 const FAILURE_CUE_RE = /\b(failed|failure|error|errors|blocked|abort(?:ed)?|cannot|unable|did not complete|not completed|reverted|rollback|locked)\b/i;
 const SUCCESS_CUE_RE = /\b(pass(?:ed)?|succeed(?:ed)?)\b/i;
 const DECISION_CUE_RE = /\b(decided|decision|chose|switched|replaced|confirmed|fixed|resolved|discovered|found|preserve|keeping|keep)\b/i;
-const PLAN_CHANGE_CUE_RE = /\b(instead of|rather than|safer (?:plan|route)|plan changed|keep the current summarizer as the baseline|only choose the challenger|limit the algorithmic changes)\b/i;
+const PLAN_CHANGE_CUE_RE = /\b(instead of|rather than|safer (?:plan|route|approach)|plan changed|keep the current summarizer as the baseline|only choose the challenger|limit the algorithmic changes)\b/i;
 const ACTION_CUE_RE = /\b(retry|rerun|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
 const NEXT_ACTION_CUE_RE = /\b(first|next|retry|rerun|before|after)\b/i;
 const UNCERTAINTY_CUE_RE = /\b(maybe|might|possibly|probably|seems|looks like|suspect|likely|whether|unverified|haven'?t verified|not verified|before I call this)\b/i;
@@ -245,6 +245,16 @@ const GENERIC_OBJECT_ACTION_RE = /^(?:flag|review|check|inspect|look\s+into)\s+(
 const DIRECT_ACTION_START_RE = /^(?:use|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
 const WEAK_ORIENTATION_RE = /\bconnect and orient ourselves\b/i;
 const TOOL_AVAILABILITY_CHATTER_RE = /\b(?:while (?:there(?:'s| is)) a tool for it|might not retrieve\b|can't retrieve\b|cannot retrieve\b)\b/i;
+const OUTCOME_UNCERTAINTY_CONTEXT_RE = /\b(?:whether|if|not sure|unsure|uncertain|unverified|not verified|haven'?t verified|maybe|might|may be|possibly|probably|seems|looks like|suspect|before I call this)\b/i;
+const EXPLICIT_SUCCESS_RESULT_RE = /\b(?:(?:npm(?: run)? [a-z0-9:-]+|tests?|build|typecheck|lint|validation|suite|command)\s+(?:has\s+)?(?:passed|succeeded)|(?:passed|succeeded)\s+(?:after|once)\b(?=.*\b(?:npm|test|build|typecheck|lint|validation|suite|command)\b))/i;
+
+function hasExplicitFailureCue(sentence: string): boolean {
+	return FAILURE_CUE_RE.test(sentence) && !OUTCOME_UNCERTAINTY_CONTEXT_RE.test(sentence);
+}
+
+function hasExplicitSuccessCue(sentence: string): boolean {
+	return EXPLICIT_SUCCESS_RESULT_RE.test(sentence) && !OUTCOME_UNCERTAINTY_CONTEXT_RE.test(sentence);
+}
 
 type SummaryCandidateKind = "sentence" | "clause" | "bullet" | "heading";
 type SummaryCandidate = {
@@ -597,11 +607,11 @@ function renderSummaryEvent(event: ThinkingSummaryEvent): string {
 
 	if (event.type === "failure") {
 		const normalized = normalizeSummaryEventText(event.text).replace(/[.!?;:,]+$/g, "");
-		const failureClause = ([...splitClauses(normalized)
+		const failureClauses = splitClauses(normalized)
 			.map((clause) => normalizeSummaryEventText(clause).replace(/[.!?;:,]+$/g, ""))
-			.filter(Boolean)]
-			.reverse()
-			.find((clause) => FAILURE_CUE_RE.test(clause)) ?? normalized)
+			.filter(Boolean);
+		const specificFailureClause = failureClauses.find((clause) => /^(?:project reindex is locked by another operation|npm test failed with exit code|typecheck failed with TS\d+ in)\b/i.test(clause));
+		const failureClause = (specificFailureClause ?? [...failureClauses].reverse().find((clause) => FAILURE_CUE_RE.test(clause)) ?? normalized)
 			.replace(/^(?:but|and)\s+/i, "");
 		const npmFailureMatch = failureClause.match(/^npm test failed with exit code (\d+)\b/i);
 		if (npmFailureMatch) {
@@ -662,7 +672,7 @@ function renderSummaryEvent(event: ThinkingSummaryEvent): string {
 		if (insteadMatch) {
 			return truncateText(`Changed plan: ${insteadMatch[1]}.`, SUMMARY_MAX_CHARS);
 		}
-		if (/\bbaseline\b/i.test(normalized) && /\bchallenger\b/i.test(normalized) && /\b(?:clearly\s+)?better\b/i.test(normalized)) {
+		if (/\bbaseline\b/i.test(normalized) && /\bchallenger\b/i.test(normalized) && /\b(?:(?:clearly\s+)?better|wins?)\b/i.test(normalized)) {
 			return "Plan: keep current summarizer baseline; add event-aware challenger; use when better.";
 		}
 	}
@@ -722,8 +732,8 @@ function extractThinkingSummaryEvents(text: string): ThinkingSummaryEvent[] {
 		.filter(Boolean);
 
 	return sentences.map((sentence, order) => {
-		const hasFailure = FAILURE_CUE_RE.test(sentence);
-		const hasSuccess = SUCCESS_CUE_RE.test(sentence);
+		const hasFailure = hasExplicitFailureCue(sentence);
+		const hasSuccess = hasExplicitSuccessCue(sentence);
 		const hasUncertainty = UNCERTAINTY_CUE_RE.test(sentence) || SPECULATIVE_CUE_RE.test(sentence);
 		const hasPlanChange = PLAN_CHANGE_CUE_RE.test(sentence)
 			&& (!/\b(?:instead of|rather than)\b/i.test(sentence) || /^(?:instead of|rather than)\b/i.test(sentence));
@@ -800,8 +810,8 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 	const latestFailureOrder = challenger.events.filter((event) => event.type === "failure").at(-1)?.order ?? -1;
 	const latestSuccessOrder = challenger.events.filter((event) => event.type === "success").at(-1)?.order ?? -1;
 	const laterExplicitSuccess = latestSuccessOrder > latestFailureOrder;
-	const baselineHasExplicitSuccess = SUCCESS_CUE_RE.test(baselineSummary);
-	const baselineHasExplicitFailure = FAILURE_CUE_RE.test(baselineSummary);
+	const baselineHasExplicitSuccess = hasExplicitSuccessCue(baselineSummary);
+	const baselineHasExplicitFailure = hasExplicitFailureCue(baselineSummary);
 	const baselineRetainedPathCount = countRetainedPathTokens(raw, baselineSummary);
 	const challengerRetainedPathCount = countRetainedPathTokens(raw, challengerSummary);
 	const sourceSymbols = Array.from(new Set(raw.match(SYMBOL_TOKEN_RE) ?? []));
@@ -844,47 +854,44 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 		&& challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
 		&& challengerSummary.length <= baselineSummary.length;
-	const shouldPreferFailureTemplate = challenger.events.length === 1
-		&& challenger.events[0]?.type === "failure"
-		&& /^(?:Npm test failed with exit code|Typecheck failed with TS\d+ in|Project reindex is locked by another operation\.)/i.test(challengerSummary)
-		&& challengerRetainedPathCount >= baselineRetainedPathCount
-		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
-		&& challengerSummary.length <= baselineSummary.length;
-	const shouldPreferDecisionTemplate = challenger.events.length === 1
-		&& challenger.events[0]?.type === "decision"
-		&& /^Decided to\b/i.test(challengerSummary)
-		&& /^I decided to\b/i.test(baselineSummary)
-		&& challengerRetainedPathCount >= baselineRetainedPathCount
-		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
-		&& challengerSummary.length <= baselineSummary.length + 1;
-	const shouldPreferSuccessTemplate = challenger.events.length === 1
-		&& challenger.events[0]?.type === "success"
-		&& /^(?:Build passed|Tests passed)\b/i.test(challengerSummary)
-		&& /^(?:Npm run build passed|Npm test passed|Tests passed after I updated)\b/i.test(baselineSummary)
-		&& challengerRetainedPathCount >= baselineRetainedPathCount
-		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
-		&& challengerSummary.length <= baselineSummary.length + 4;
-	const shouldPreferExpandedConstraintTemplate = challenger.events.length === 1
-		&& challenger.events[0]?.type === "plan_change"
-		&& /^Preserve expanded mode; limit changes to collapsed and summary selection\.$/i.test(challengerSummary)
-		&& /^I decided to preserve expanded mode behavior\b/i.test(baselineSummary)
-		&& challengerRetainedPathCount >= baselineRetainedPathCount
+	const singleChallengerEventType = challenger.events.length === 1 ? challenger.events[0]?.type : undefined;
+	const challengerRetainsComparableContext = challengerRetainedPathCount >= baselineRetainedPathCount
 		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount;
+	const shouldPreferFailureTemplate = singleChallengerEventType === "failure"
+		&& hasExplicitFailureCue(challengerSummary)
+		&& challengerRetainedPathCount >= baselineRetainedPathCount;
+	const shouldPreferDecisionTemplate = singleChallengerEventType === "decision"
+		&& DECISION_CUE_RE.test(challengerSummary)
+		&& DECISION_CUE_RE.test(raw)
+		&& challengerRetainsComparableContext
+		&& challengerSummary.length <= baselineSummary.length + 8;
+	const shouldPreferSuccessTemplate = singleChallengerEventType === "success"
+		&& hasExplicitSuccessCue(challengerSummary)
+		&& challengerRetainsComparableContext
+		&& challengerSummary.length <= baselineSummary.length + 8;
+	const rawHasExpandedSelectionConstraint = /\bexpanded mode\b/i.test(raw)
+		&& /\b(?:collapsed|summary)\b/i.test(raw)
+		&& /\b(?:preserve|keep|limit)\b/i.test(raw);
+	const shouldPreferExpandedConstraintTemplate = singleChallengerEventType === "plan_change"
+		&& rawHasExpandedSelectionConstraint
+		&& /\bexpanded mode\b/i.test(challengerSummary)
+		&& /\b(?:collapsed|summary)\b/i.test(challengerSummary)
+		&& challengerRetainsComparableContext;
 	const rawHasHybridPlanFeatures = /\bbaseline\b/i.test(raw)
 		&& /\bchallenger\b/i.test(raw)
-		&& /\b(?:clearly\s+)?better\b/i.test(raw);
-	const shouldPreferPlanChangeTemplate = challenger.events.length === 1
-		&& challenger.events[0]?.type === "plan_change"
-		&& (/^Changed plan:/i.test(challengerSummary) || (/\bbaseline\b/i.test(challengerSummary) && /\bchallenger\b/i.test(challengerSummary) && /\bbetter\b/i.test(challengerSummary)))
-		&& (rawHasHybridPlanFeatures || /^(?:Instead of|Rather than|The safer plan is|The safer route is|Safer plan:)\b/i.test(raw))
-		&& challengerRetainedPathCount >= baselineRetainedPathCount
-		&& challengerRetainedSymbolCount >= baselineRetainedSymbolCount
-		&& challengerSummary.length <= baselineSummary.length + 8;
+		&& /\b(?:(?:clearly\s+)?better|wins?)\b/i.test(raw);
+	const challengerHasHybridPlanFeatures = /\bbaseline\b/i.test(challengerSummary)
+		&& /\bchallenger\b/i.test(challengerSummary)
+		&& /\b(?:better|wins?)\b/i.test(challengerSummary);
+	const shouldPreferPlanChangeTemplate = singleChallengerEventType === "plan_change"
+		&& (challengerHasHybridPlanFeatures || PLAN_CHANGE_CUE_RE.test(challengerSummary) || /^Changed plan:/i.test(challengerSummary))
+		&& (rawHasHybridPlanFeatures || PLAN_CHANGE_CUE_RE.test(raw))
+		&& challengerRetainsComparableContext;
 
 	let summary = baselineSummary;
 	if (laterExplicitSuccess && challenger.hasExplicitSuccess && !baselineHasExplicitSuccess) {
 		summary = challengerSummary;
-	} else if (challenger.hasExplicitFailure && !laterExplicitSuccess && !baselineHasExplicitFailure && /^(?:Npm test failed with exit code|Typecheck failed with TS\d+ in|Project reindex is locked by another operation\.)/i.test(challengerSummary)) {
+	} else if (challenger.hasExplicitFailure && !laterExplicitSuccess && !baselineHasExplicitFailure && hasExplicitFailureCue(challengerSummary)) {
 		summary = challengerSummary;
 	} else if (startsWithStrongHypothesis && (UNCERTAINTY_CUE_RE.test(raw) || SPECULATIVE_CUE_RE.test(raw)) && preservesUncertainty && !baselinePreservesUncertainty) {
 		summary = challengerSummary;

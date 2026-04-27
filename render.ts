@@ -126,7 +126,10 @@ function pickCollapsedStep(steps: DerivedThinkingStep[], activeStepId?: string):
 
 	for (let index = 0; index < steps.length; index += 1) {
 		const step = steps[index]!;
-		if (step.hasExplicitFailure) latestFailureIndex = index;
+		if (step.hasExplicitFailure) {
+			latestFailureIndex = index;
+			latestSuccessAfterFailureIndex = -1;
+		}
 		if (latestFailureIndex !== -1 && step.hasExplicitSuccess && index > latestFailureIndex) {
 			latestSuccessAfterFailureIndex = index;
 		}
@@ -243,7 +246,10 @@ function selectSummarySteps(steps: DerivedThinkingStep[], activeStepId?: string)
 
 	for (let index = 0; index < steps.length; index += 1) {
 		const step = steps[index]!;
-		if (step.hasExplicitFailure) latestFailureIndex = index;
+		if (step.hasExplicitFailure) {
+			latestFailureIndex = index;
+			latestSuccessAfterFailureIndex = -1;
+		}
 		if (latestFailureIndex !== -1 && step.hasExplicitSuccess && index > latestFailureIndex) {
 			latestSuccessAfterFailureIndex = index;
 		}
@@ -255,11 +261,13 @@ function selectSummarySteps(steps: DerivedThinkingStep[], activeStepId?: string)
 
 	const scoreEntry = ({ step, index }: { step: DerivedThinkingStep; index: number }): number => {
 		let score = step.collapsedPriority ?? 0;
+		const isStaleSuccessBeforeLatestFailure = step.hasExplicitSuccess && latestFailureIndex !== -1 && index < latestFailureIndex;
 		if (index === latestFailureIndex && latestSuccessAfterFailureIndex === -1) score += 120;
 		if (index === latestSuccessAfterFailureIndex) score += 110;
 		if (stepHasEventType(step, "decision") || stepHasEventType(step, "plan_change")) score += 80;
 		if (step.hasExplicitFailure) score += 50;
-		if (step.hasExplicitSuccess) score += 45;
+		if (step.hasExplicitSuccess && !isStaleSuccessBeforeLatestFailure) score += 45;
+		if (isStaleSuccessBeforeLatestFailure) score -= 200;
 		if (stepHasEventType(step, "focus") && !stepHasEventType(step, "decision") && !stepHasEventType(step, "plan_change") && !step.hasExplicitFailure && !step.hasExplicitSuccess) score -= 15;
 		return score + (index / 100);
 	};

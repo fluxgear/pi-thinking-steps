@@ -265,6 +265,19 @@ describe("deriveThinkingSteps", () => {
 		assert.match(steps[0]?.summary ?? "", /Inspect event listeners|Verify that refreshes can be triggered safely/);
 	});
 
+	it("keeps consecutive headings as separate section boundaries", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "## Phase A\n\n## Phase B\n\nInspect parse.ts.",
+			},
+		]);
+
+		assert.equal(steps.length, 2);
+		assert.equal(steps[0]?.body, "## Phase A");
+		assert.equal(steps[1]?.body, "## Phase B\n\nInspect parse.ts.");
+	});
+
 	it("creates a faithful fallback summary for redacted reasoning", () => {
 		const steps = deriveThinkingSteps([{ contentIndex: 2, text: "", redacted: true }]);
 		assert.equal(steps.length, 1);
@@ -2020,10 +2033,10 @@ describe("thinkingStepsExtension failure paths", () => {
 		}
 	});
 
-	it("releases a retained patch from a later same-scope extension instance when session_shutdown is not observed", async () => {
+	it("releases a retained patch from a later different-scope extension instance when session_shutdown is not observed", async () => {
 		resetExtensionState("/scope-reload");
 		const firstHarness = createExtensionHarness([], true, "/scope-reload");
-		const secondHarness = createExtensionHarness([], true, "/scope-reload");
+		const secondHarness = createExtensionHarness([], true, "/other-scope");
 		const firstStart = getSingleHandler(firstHarness.pi, "session_start");
 		const secondShutdown = getSingleHandler(secondHarness.pi, "session_shutdown");
 
@@ -2524,11 +2537,12 @@ describe("repo metadata contracts", () => {
 			version: string;
 			files: string[];
 			license: string;
+			dependencies: Record<string, string>;
 			devDependencies: Record<string, string>;
 		};
 		const packageLock = JSON.parse(await readFile("package-lock.json", "utf8")) as {
 			version: string;
-			packages?: Record<string, { version?: string }>;
+			packages?: Record<string, { version?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> }>;
 		};
 		for (const file of packageJson.files) {
 			await assert.doesNotReject(readFile(file, "utf8"));
@@ -2536,9 +2550,14 @@ describe("repo metadata contracts", () => {
 		assert.equal(packageJson.version, packageLock.version);
 		assert.equal(packageJson.version, packageLock.packages?.[""]?.version);
 		assert.equal(packageJson.license, "MIT");
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-ai"], "0.69.0");
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-coding-agent"], "0.69.0");
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-tui"], "0.69.0");
+		assert.equal(packageJson.dependencies["@mariozechner/pi-ai"], "0.69.0");
+		assert.equal(packageJson.dependencies["@mariozechner/pi-coding-agent"], "0.69.0");
+		assert.equal(packageJson.dependencies["@mariozechner/pi-tui"], "0.69.0");
+		assert.equal(packageJson.devDependencies["@mariozechner/pi-ai"], undefined);
+		assert.equal(packageJson.devDependencies["@mariozechner/pi-coding-agent"], undefined);
+		assert.equal(packageJson.devDependencies["@mariozechner/pi-tui"], undefined);
+		assert.deepEqual(packageLock.packages?.[""]?.dependencies, packageJson.dependencies);
+		assert.ok(!Object.values(packageJson.dependencies).includes("latest"));
 		assert.ok(!Object.values(packageJson.devDependencies).includes("latest"));
 
 		const license = await readFile("LICENSE", "utf8");

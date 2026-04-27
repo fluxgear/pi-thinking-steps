@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.7"><img alt="release" src="https://img.shields.io/badge/release-v1.0.7-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.8"><img alt="release" src="https://img.shields.io/badge/release-v1.0.8-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -197,9 +197,9 @@ That means:
 - `npm test` is part of the maintenance contract, not an optional extra
 - if patch install fails during `session_start`, the current session stays on Pi's native thinking renderer and live mode switching is disabled for that degraded session
 - project/global default saves and clears remain available during a degraded session, but they apply only to future compatible sessions
-- if `session_shutdown` is missed, a later same-scope extension instance can still release the retained patch during shutdown
+- if `session_shutdown` is missed, a later extension shutdown can still release the retained process-global patch regardless of cwd
 
-The current package is pinned to Pi package version `0.69.0` in `package.json`.
+The current package uses Pi package version `0.69.0` as runtime dependencies in `package.json`, and compatibility-sensitive upgrades must update `package-lock.json` in the same change.
 
 ---
 
