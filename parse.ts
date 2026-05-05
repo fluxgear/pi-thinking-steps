@@ -362,7 +362,7 @@ function extractCandidates(value: string): SummaryCandidate[] {
 		}
 	});
 
-	return candidates.filter((candidate) => candidate.compressed.length > 0);
+	return candidates.filter((candidate) => candidate.compressed.length > 0).slice(0, 50);
 }
 
 function formatSummarySentence(clauses: string[], fallback: string): string {
@@ -400,15 +400,24 @@ function summarizeThinkingTextBaseline(text: string, fallback = "Reasoning is hi
 	}
 
 	const similarity = (left: SummaryCandidate, right: SummaryCandidate): number => {
-		const leftSet = new Set(left.tokens);
-		const rightSet = new Set(right.tokens);
-		const union = new Set([...leftSet, ...rightSet]);
-		if (union.size === 0) return 0;
+		if (left.tokens.length === 0 && right.tokens.length === 0) return 0;
+		const smaller = left.tokens.length < right.tokens.length ? left.tokens : right.tokens;
+		const larger = left.tokens.length < right.tokens.length ? right.tokens : left.tokens;
+		const smallerSet = new Set(smaller);
 		let intersectionWeight = 0;
 		let unionWeight = 0;
-		for (const token of union) {
+		const processed = new Set<string>();
+		for (const token of larger) {
+			if (processed.has(token)) continue;
+			processed.add(token);
 			const weight = 1 + Math.log((1 + candidates.length) / (1 + (documentFrequency.get(token) ?? 0)));
-			if (leftSet.has(token) && rightSet.has(token)) intersectionWeight += weight;
+			if (smallerSet.has(token)) intersectionWeight += weight;
+			unionWeight += weight;
+		}
+		for (const token of smaller) {
+			if (processed.has(token)) continue;
+			processed.add(token);
+			const weight = 1 + Math.log((1 + candidates.length) / (1 + (documentFrequency.get(token) ?? 0)));
 			unionWeight += weight;
 		}
 		return unionWeight === 0 ? 0 : intersectionWeight / unionWeight;

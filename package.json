@@ -45,7 +45,7 @@
     "@mariozechner/pi-ai": "0.69.0",
     "@mariozechner/pi-coding-agent": "0.69.0",
     "@mariozechner/pi-tui": "0.69.0",
-    "@types/node": "^24.5.2",
+    "@types/node": "^24.12.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
