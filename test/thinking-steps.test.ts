@@ -399,6 +399,24 @@ describe("summarizeThinkingText", () => {
 		assert.ok(summary.includes("TS2322"));
 	});
 
+	it("preserves small-input failure summaries while optimizing similarity", () => {
+		const summary = summarizeThinkingText(
+			"Inspect file1.ts for context.\n\nInspect file2.ts for context.\n\nnpm test failed with exit code 1.",
+		);
+		assert.match(summary, /npm test failed with exit code 1/i);
+	});
+
+	it("keeps late salient failures when limiting large candidate sets", () => {
+		const genericCandidates = Array.from({ length: 140 }, (_, index) => `Inspect file${index}.ts for context.`);
+		const summary = summarizeThinkingText([
+			...genericCandidates,
+			"npm test failed with exit code 1.",
+		].join("\n\n"));
+
+		assert.match(summary, /npm test failed with exit code 1/i);
+		assert.ok(summary.length <= 84);
+	});
+
 	it("preserves unverified suspicion instead of restating it as fact", () => {
 		const summary = summarizeThinkingText(
 			"This looks like a stale lock, but I haven't verified it yet. I will retry once and check the index state.",

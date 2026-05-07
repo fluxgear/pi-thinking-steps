@@ -261,6 +261,7 @@ type SummaryCandidate = {
 	text: string;
 	compressed: string;
 	tokens: string[];
+	tokenSet: Set<string>;
 	index: number;
 	kind: SummaryCandidateKind;
 	centrality: number;
@@ -392,11 +393,13 @@ function extractCandidates(value: string): SummaryCandidate[] {
 	const pushCandidate = (textValue: string, kind: SummaryCandidateKind) => {
 		const normalizedText = normalizeCandidateText(textValue);
 		if (!normalizedText || SEPARATOR_RE.test(normalizedText) || seen.has(normalizedText.toLowerCase())) return;
+		const tokens = tokenize(normalizedText);
 		seen.add(normalizedText.toLowerCase());
 		candidates.push({
 			text: normalizedText,
 			compressed: compressCandidate(normalizedText),
-			tokens: tokenize(normalizedText),
+			tokens,
+			tokenSet: new Set(tokens),
 			index: candidateIndex++,
 			kind,
 			centrality: 0,
@@ -430,6 +433,48 @@ function extractCandidates(value: string): SummaryCandidate[] {
 	return candidates.filter((candidate) => candidate.compressed.length > 0);
 }
 
+const SUMMARY_CANDIDATE_LIMIT = 80;
+const SUMMARY_CANDIDATE_EDGE_KEEP = 8;
+
+function preliminaryCandidateScore(candidate: SummaryCandidate, candidateCount: number): number {
+	const maxIndex = Math.max(candidateCount - 1, 1);
+	let score = (1 - candidate.index / maxIndex) * 10;
+	if (candidate.index >= candidateCount - SUMMARY_CANDIDATE_EDGE_KEEP) score += 8;
+	if (candidate.kind === "bullet" || candidate.kind === "heading") score += 10;
+	if (ARTIFACT_RE.test(candidate.text)) score += 30;
+	if (DIRECT_ACTION_START_RE.test(candidate.compressed)) score += 45;
+	if (DECISION_CUE_RE.test(candidate.text)) score += 55;
+	if (FAILURE_CUE_RE.test(candidate.text)) score += 70;
+	if (TOOL_AVAILABILITY_CHATTER_RE.test(candidate.text)) score -= 60;
+	if (META_CHATTER_RE.test(candidate.text)) score -= 25;
+	return score;
+}
+
+function limitSummaryCandidates(candidates: SummaryCandidate[]): SummaryCandidate[] {
+	if (candidates.length <= SUMMARY_CANDIDATE_LIMIT) return candidates;
+	const selected = new Set<number>();
+	const edgeCount = Math.min(SUMMARY_CANDIDATE_EDGE_KEEP, candidates.length);
+
+	for (let index = 0; index < edgeCount; index += 1) {
+		selected.add(index);
+		selected.add(candidates.length - 1 - index);
+	}
+
+	const ranked = [...candidates].sort((left, right) =>
+		preliminaryCandidateScore(right, candidates.length) - preliminaryCandidateScore(left, candidates.length)
+		|| left.index - right.index
+	);
+	for (const candidate of ranked) {
+		if (selected.size >= SUMMARY_CANDIDATE_LIMIT) break;
+		selected.add(candidate.index);
+	}
+
+	return [...selected]
+		.sort((left, right) => left - right)
+		.map((index) => candidates[index]!)
+		.filter(Boolean);
+}
+
 function formatSummarySentence(clauses: string[], fallback: string): string {
 	const normalizedClauses = clauses
 		.map((candidate) => candidate.replace(/[.!?;:,]+$/g, "").trim())
@@ -452,34 +497,36 @@ function summarizeThinkingTextBaseline(text: string, fallback = "Reasoning is hi
 	const raw = normalizeNewlines(text).trim();
 	if (!raw) return fallback;
 
-	const candidates = extractCandidates(raw);
+	const candidates = limitSummaryCandidates(extractCandidates(raw));
 	if (candidates.length === 0) {
 		return truncateText(`${capitalize(collapseWhitespace(stripMarkdownEmphasis(raw))).replace(/[.!?;:,]+$/g, "")}.`, SUMMARY_MAX_CHARS);
 	}
 
 	const documentFrequency = new Map<string, number>();
 	for (const candidate of candidates) {
-		for (const token of new Set(candidate.tokens)) {
+		for (const token of candidate.tokenSet) {
 			documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
 		}
 	}
 
 	const similarity = (left: SummaryCandidate, right: SummaryCandidate): number => {
-		const leftSet = new Set(left.tokens);
-		const rightSet = new Set(right.tokens);
-		const union = new Set([...leftSet, ...rightSet]);
-		if (union.size === 0) return 0;
+		if (left.tokenSet.size === 0 && right.tokenSet.size === 0) return 0;
 		let intersectionWeight = 0;
 		let unionWeight = 0;
-		for (const token of union) {
+		for (const token of left.tokenSet) {
 			const weight = 1 + Math.log((1 + candidates.length) / (1 + (documentFrequency.get(token) ?? 0)));
-			if (leftSet.has(token) && rightSet.has(token)) intersectionWeight += weight;
+			if (right.tokenSet.has(token)) intersectionWeight += weight;
+			unionWeight += weight;
+		}
+		for (const token of right.tokenSet) {
+			if (left.tokenSet.has(token)) continue;
+			const weight = 1 + Math.log((1 + candidates.length) / (1 + (documentFrequency.get(token) ?? 0)));
 			unionWeight += weight;
 		}
 		return unionWeight === 0 ? 0 : intersectionWeight / unionWeight;
 	};
 
-	const maxIndex = Math.max(candidates.length - 1, 1);
+	const maxIndex = Math.max(...candidates.map((candidate) => candidate.index), 1);
 	const maxCentrality = Math.max(
 		...candidates.map((candidate) => {
 			if (candidates.length === 1) return 1;

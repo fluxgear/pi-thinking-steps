@@ -8,9 +8,8 @@
   <strong>Faithful, terminal-native thinking visualization for Pi.</strong><br />
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
-
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.8"><img alt="release" src="https://img.shields.io/badge/release-v1.0.8-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.9"><img alt="release" src="https://img.shields.io/badge/release-v1.0.9-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -240,7 +239,6 @@ Typecheck only:
 ```bash
 npm run build
 ```
-
 ---
 
 ## Published package contents
@@ -248,6 +246,7 @@ npm run build
 The package ships:
 
 - `README.md`
+- `CHANGELOG.md`
 - `LICENSE`
 - the extension TypeScript sources
 - the README SVG assets under `assets/`
