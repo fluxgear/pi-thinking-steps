@@ -1,4 +1,5 @@
 export type ThinkingStepsMode = "collapsed" | "summary" | "expanded";
+export type PersistedThinkingStepsPreferenceScope = "project" | "global";
 
 export type ThinkingSemanticRole =
 	| "inspect"

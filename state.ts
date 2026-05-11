@@ -18,6 +18,8 @@ interface ThinkingStepsGlobalState {
 	activeByScopeKey: Record<string, Record<string, ThinkingActiveEntry>>;
 	lastActiveByScopeKey: Record<string, ActiveThinkingState>;
 	refreshToggleByScope: Record<string, boolean>;
+	messageScopeByObject: WeakMap<object, string>;
+	messageScopeByTimestamp: Record<string, string>;
 	patchReleases: PatchRelease[];
 	patchReleasesByScope: Record<string, PatchRelease[]>;
 	patchRefCount: number;
@@ -33,6 +35,8 @@ interface LegacyThinkingStepsGlobalState {
 	activeByScopeKey?: unknown;
 	lastActiveByScopeKey?: unknown;
 	refreshToggleByScope?: unknown;
+	messageScopeByObject?: unknown;
+	messageScopeByTimestamp?: unknown;
 	patchReleases?: unknown;
 	patchReleasesByScope?: unknown;
 	patchRefCount?: unknown;
@@ -110,13 +114,16 @@ function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinking
 	const refreshToggleByScope: Record<string, boolean> = isRecord(state.refreshToggleByScope)
 		? Object.fromEntries(Object.entries(state.refreshToggleByScope).map(([scopeKey, enabled]) => [normalizeThinkingScopeKey(scopeKey), enabled === true]))
 		: {};
+	const messageScopeByTimestamp: Record<string, string> = isRecord(state.messageScopeByTimestamp)
+		? Object.fromEntries(Object.entries(state.messageScopeByTimestamp).filter((entry): entry is [string, string] => typeof entry[1] === "string").map(([messageTimestamp, scopeKey]) => [messageTimestamp, normalizeThinkingScopeKey(scopeKey)]))
+		: {};
 	const legacyPatchReleasesByScope: Record<string, PatchRelease[]> = isRecord(state.patchReleasesByScope)
 		? Object.fromEntries(Object.entries(state.patchReleasesByScope).map(([scopeKey, releases]) => [normalizeThinkingScopeKey(scopeKey), Array.isArray(releases) ? releases as PatchRelease[] : []]))
 		: {};
 	const patchReleases: PatchRelease[] = Array.isArray(state.patchReleases)
 		? state.patchReleases as PatchRelease[]
 		: Object.values(legacyPatchReleasesByScope).flat();
-	const patchReleasesByScope: Record<string, PatchRelease[]> = {};
+	const patchReleasesByScope: Record<string, PatchRelease[]> = { ...legacyPatchReleasesByScope };
 
 	for (const scopeKey of Object.keys(modeByScopeKey)) {
 		activeByScopeKey[scopeKey] ??= {};
@@ -139,6 +146,8 @@ function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinking
 	state.activeByScopeKey = activeByScopeKey;
 	state.lastActiveByScopeKey = lastActiveByScopeKey;
 	state.refreshToggleByScope = refreshToggleByScope;
+	state.messageScopeByObject = state.messageScopeByObject instanceof WeakMap ? state.messageScopeByObject as WeakMap<object, string> : new WeakMap<object, string>();
+	state.messageScopeByTimestamp = messageScopeByTimestamp;
 	state.patchReleases = patchReleases;
 	state.patchReleasesByScope = patchReleasesByScope;
 	state.patchRefCount = typeof state.patchRefCount === "number" && Number.isFinite(state.patchRefCount)
@@ -160,6 +169,8 @@ const globalState = (() => {
 		activeByScopeKey: { [DEFAULT_SCOPE_KEY]: {} },
 		lastActiveByScopeKey: { [DEFAULT_SCOPE_KEY]: { active: false } },
 		refreshToggleByScope: {},
+		messageScopeByObject: new WeakMap<object, string>(),
+		messageScopeByTimestamp: {},
 		patchReleases: [],
 		patchReleasesByScope: {},
 		patchRefCount: 0,
@@ -180,6 +191,9 @@ function ensureScopeState(scopeKey: string): void {
 	}
 	if (!(scopeKey in globalState.refreshToggleByScope)) {
 		globalState.refreshToggleByScope[scopeKey] = false;
+	}
+	if (!(scopeKey in globalState.patchReleasesByScope)) {
+		globalState.patchReleasesByScope[scopeKey] = [];
 	}
 }
 
@@ -270,12 +284,58 @@ export function nextThinkingRefreshLabel(label: string, scopeKey?: string): stri
 	return useInvisibleSuffix ? `${label}${LABEL_REFRESH_SUFFIX}` : label;
 }
 
-export function registerThinkingPatchRelease(_scopeKey: string, release: PatchRelease): void {
-	globalState.patchReleases.push(release);
+export function registerThinkingPatchRelease(scopeKey: string, release: PatchRelease): void {
+	const normalizedScopeKey = normalizeThinkingScopeKey(scopeKey);
+	ensureScopeState(normalizedScopeKey);
+	globalState.patchReleasesByScope[normalizedScopeKey]!.push(release);
 }
 
-export function takeThinkingPatchRelease(_scopeKey: string): PatchRelease | undefined {
-	return globalState.patchReleases.pop();
+export function takeThinkingPatchRelease(scopeKey: string): PatchRelease | undefined {
+	const normalizedScopeKey = normalizeThinkingScopeKey(scopeKey);
+	ensureScopeState(normalizedScopeKey);
+	return globalState.patchReleasesByScope[normalizedScopeKey]!.pop();
+}
+
+export function recordThinkingMessageScope(message: object, scopeKey?: string): void {
+	const requestedScopeKey = normalizeThinkingScopeKey(scopeKey ?? globalState.currentScopeKey);
+	ensureScopeState(requestedScopeKey);
+
+	const existingScopeKey = globalState.messageScopeByObject.get(message);
+	const normalizedScopeKey = existingScopeKey ?? requestedScopeKey;
+	ensureScopeState(normalizedScopeKey);
+	if (!existingScopeKey) {
+		globalState.messageScopeByObject.set(message, normalizedScopeKey);
+	}
+
+	const timestamp = typeof (message as { timestamp?: unknown }).timestamp === "number"
+		? (message as { timestamp: number }).timestamp
+		: undefined;
+	if (timestamp !== undefined) {
+		globalState.messageScopeByTimestamp[String(timestamp)] = normalizedScopeKey;
+	}
+}
+
+export function resolveThinkingMessageScope(message: object, fallbackScopeKey?: string): string {
+	const objectScopeKey = globalState.messageScopeByObject.get(message);
+	if (objectScopeKey) {
+		ensureScopeState(objectScopeKey);
+		return objectScopeKey;
+	}
+
+	const timestamp = typeof (message as { timestamp?: unknown }).timestamp === "number"
+		? (message as { timestamp: number }).timestamp
+		: undefined;
+	if (timestamp !== undefined) {
+		const timestampScopeKey = globalState.messageScopeByTimestamp[String(timestamp)];
+		if (timestampScopeKey) {
+			ensureScopeState(timestampScopeKey);
+			return timestampScopeKey;
+		}
+	}
+
+	const normalizedScopeKey = normalizeThinkingScopeKey(fallbackScopeKey ?? globalState.currentScopeKey);
+	ensureScopeState(normalizedScopeKey);
+	return normalizedScopeKey;
 }
 
 export function resetThinkingStepsViewState(scopeKey?: string): void {
@@ -286,6 +346,11 @@ export function resetThinkingStepsViewState(scopeKey?: string): void {
 		globalState.refreshToggleByScope[normalizedScopeKey] = false;
 		globalState.activeByScopeKey[normalizedScopeKey] = {};
 		globalState.lastActiveByScopeKey[normalizedScopeKey] = { active: false };
+		for (const [messageTimestamp, ownerScopeKey] of Object.entries(globalState.messageScopeByTimestamp)) {
+			if (ownerScopeKey === normalizedScopeKey) {
+				delete globalState.messageScopeByTimestamp[messageTimestamp];
+			}
+		}
 		return;
 	}
 
@@ -294,6 +359,8 @@ export function resetThinkingStepsViewState(scopeKey?: string): void {
 	globalState.activeByScopeKey = { [DEFAULT_SCOPE_KEY]: {} };
 	globalState.lastActiveByScopeKey = { [DEFAULT_SCOPE_KEY]: { active: false } };
 	globalState.refreshToggleByScope = {};
+	globalState.messageScopeByObject = new WeakMap<object, string>();
+	globalState.messageScopeByTimestamp = {};
 }
 
 export function getPatchRefCount(): number {

@@ -52,10 +52,8 @@ interface InlineSegment {
 function sanitizeThinkingText(text: string): string {
 	return text
 		.replace(/\r\n?/g, "\n")
-		.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
-		.replace(/\u009d[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
-		.replace(/\u001bP[\s\S]*?\u001b\\/g, "")
-		.replace(/\u0090[\s\S]*?\u001b\\/g, "")
+		.replace(/\u001b[\]PX^_][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")
+		.replace(/[\u0090\u0098\u009d\u009e\u009f][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")
 		.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g, "")
 		.replace(/\u009b[0-?]*[ -/]*[@-~]/g, "")
 		.replace(/[\x00-\x08\x0B-\x1F\x7F-\x9F]/g, "");
@@ -385,9 +383,10 @@ export class ThinkingStepsComponent implements Component {
 		private readonly theme: ThinkingThemeLike,
 		private readonly messageTimestamp: number,
 		blocks: ThinkingSourceBlock[],
+		scopeKey?: string,
 	) {
 		this.steps = deriveThinkingSteps(blocks);
-		this.scopeKey = getCurrentThinkingScopeKey();
+		this.scopeKey = scopeKey ?? getCurrentThinkingScopeKey();
 	}
 
 	render(width: number): string[] {

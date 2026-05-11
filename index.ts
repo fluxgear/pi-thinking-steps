@@ -4,9 +4,8 @@ import { Key } from "@mariozechner/pi-tui";
 import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
-import { clearActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, registerThinkingPatchRelease, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
-import type { ThinkingStepsMode } from "./types.js";
-import type { PersistedThinkingStepsPreferenceScope } from "./persistence.js";
+import { clearActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, recordThinkingMessageScope, registerThinkingPatchRelease, resolveThinkingMessageScope, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
+import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from "./types.js";
 
 type ThinkingStepsCommandScope = "session" | PersistedThinkingStepsPreferenceScope;
 type ThinkingStepsCommandAction =
@@ -66,9 +65,11 @@ async function readRestoredModePreference(
 
 async function restoreMode(ctx: ExtensionContext): Promise<ThinkingStepsMode> {
 	const entries = ctx.sessionManager.getEntries() as Array<{ type?: string; customType?: string; data?: { mode?: string } }>;
-	const saved = entries.filter((entry) => entry.type === "custom" && entry.customType === CUSTOM_ENTRY_TYPE).pop();
-	const sessionMode = parseThinkingMode(saved?.data?.mode ?? "");
-	if (sessionMode) return sessionMode;
+	const savedEntries = entries.filter((entry) => entry.type === "custom" && entry.customType === CUSTOM_ENTRY_TYPE);
+	for (let index = savedEntries.length - 1; index >= 0; index -= 1) {
+		const sessionMode = parseThinkingMode(savedEntries[index]?.data?.mode ?? "");
+		if (sessionMode) return sessionMode;
+	}
 
 	const projectMode = await readRestoredModePreference(ctx, "project");
 	if (projectMode) return projectMode;
@@ -300,22 +301,26 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 
 	pi.on("message_start", async (event) => {
 		if (event.message.role === "assistant") {
+			recordThinkingMessageScope(event.message, sessionScopeKey);
+			const ownerScopeKey = resolveThinkingMessageScope(event.message, sessionScopeKey);
 			const timestamp = typeof (event.message as { timestamp?: unknown }).timestamp === "number"
 				? (event.message as { timestamp: number }).timestamp
 				: undefined;
-			clearActiveThinkingState(timestamp, sessionScopeKey);
+			clearActiveThinkingState(timestamp, ownerScopeKey);
 		}
 	});
 
 	pi.on("message_update", async (event) => {
 		if (event.message.role !== "assistant") return;
+		recordThinkingMessageScope(event.message, sessionScopeKey);
+		const ownerScopeKey = resolveThinkingMessageScope(event.message, sessionScopeKey);
 		const assistantEvent = event.assistantMessageEvent;
 		if (assistantEvent.type === "thinking_start" || assistantEvent.type === "thinking_delta") {
 			setActiveThinkingState({
 				active: true,
 				messageTimestamp: event.message.timestamp,
 				contentIndex: assistantEvent.contentIndex,
-			}, sessionScopeKey);
+			}, ownerScopeKey);
 			return;
 		}
 
@@ -328,16 +333,18 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			assistantEvent.type === "toolcall_delta" ||
 			assistantEvent.type === "toolcall_end"
 		) {
-			clearActiveThinkingState(event.message.timestamp, sessionScopeKey);
+			clearActiveThinkingState(event.message.timestamp, ownerScopeKey);
 		}
 	});
 
 	pi.on("message_end", async (event) => {
 		if (event.message.role === "assistant") {
+			recordThinkingMessageScope(event.message, sessionScopeKey);
+			const ownerScopeKey = resolveThinkingMessageScope(event.message, sessionScopeKey);
 			const timestamp = typeof (event.message as { timestamp?: unknown }).timestamp === "number"
 				? (event.message as { timestamp: number }).timestamp
 				: undefined;
-			clearActiveThinkingState(timestamp, sessionScopeKey);
+			clearActiveThinkingState(timestamp, ownerScopeKey);
 		}
 	});
 

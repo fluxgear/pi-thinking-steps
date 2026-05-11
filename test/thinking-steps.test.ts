@@ -510,6 +510,19 @@ describe("inferThinkingRole", () => {
 			"verify",
 		);
 	});
+
+	it("does not treat failure or error reference prose as explicit failure", () => {
+		const steps = deriveThinkingSteps([{
+			contentIndex: 0,
+			text: "Inspect failure handling in parse.ts.\n\nCompare error rendering in render.ts.",
+		}]);
+
+		assert.equal(steps.length, 2);
+		assert.equal(steps[0]?.hasExplicitFailure, false);
+		assert.equal(steps[1]?.hasExplicitFailure, false);
+		assert.equal(steps[0]?.role, "inspect");
+		assert.equal(steps[1]?.role, "compare");
+	});
 });
 describe("renderThinkingStepsLines", () => {
 	const theme = createPlainTheme();
@@ -874,6 +887,26 @@ describe("thinkingStepsExtension", () => {
 		} finally {
 			await sessionShutdown({}, ctx);
 			assert.equal(getPatchRefCount(), 0);
+			resetExtensionState();
+		}
+	});
+
+	it("restores the most recent valid session mode when newer session entries are malformed", async () => {
+		resetExtensionState();
+		const { pi, ctx } = createExtensionHarness([
+			{ type: "custom", customType: "thinking-steps.mode", data: { mode: "collapsed" } },
+			{ type: "custom", customType: "thinking-steps.mode", data: { mode: "bogus" } },
+			{ type: "custom", customType: "thinking-steps.mode" },
+		]);
+		const sessionStart = getSingleHandler(pi, "session_start");
+		const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+
+		try {
+			await sessionStart({}, ctx);
+			assert.equal(getThinkingStepsMode(), "collapsed");
+			assert.deepEqual(ctx.ui.statuses.at(-1), { key: "thinking-steps", value: "thinking: collapsed" });
+		} finally {
+			await sessionShutdown({}, ctx);
 			resetExtensionState();
 		}
 	});
@@ -1613,6 +1646,20 @@ describe("deriveThinkingSteps list continuations", () => {
 		assert.equal(steps[2]?.body, "npm test failed with exit code 1.");
 		assert.equal(steps[2]?.hasExplicitFailure, true);
 	});
+
+	it("splits standalone planning prose after a list item into its own step", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "1. Inspect parse.ts.\n\nNeed to update render.ts next.\n\n2. Run npm test.",
+			},
+		]);
+
+		assert.equal(steps.length, 3);
+		assert.equal(steps[0]?.body, "1. Inspect parse.ts.");
+		assert.equal(steps[1]?.body, "Need to update render.ts next.");
+		assert.equal(steps[2]?.body, "2. Run npm test.");
+	});
 });
 
 
@@ -1683,6 +1730,30 @@ describe("renderThinkingStepsLines control-sequence sanitization", () => {
 		assert.ok(!expandedJoined.includes("\u0085"));
 		assert.ok(summaryJoined.includes("Inspect render.ts carefully."));
 		assert.ok(expandedJoined.includes("Verify that refreshes can be triggered safely."));
+	});
+
+	it("strips ST-terminated string-control payloads from rendered thinking text", () => {
+		const steps = deriveThinkingSteps([{
+			contentIndex: 0,
+			text: "Inspect \u009dhidden title\u009crender.ts carefully.\n\nVerify \u001b^private payload\u001b\\refreshes can be triggered safely.",
+		}]);
+		const summaryJoined = renderThinkingStepsLines(plainTheme, 120, {
+			mode: "summary",
+			steps,
+			isActive: false,
+		}).join("\n");
+		const expandedJoined = renderThinkingStepsLines(plainTheme, 120, {
+			mode: "expanded",
+			steps,
+			isActive: false,
+		}).join("\n");
+
+		assert.ok(!summaryJoined.includes("hidden title"));
+		assert.ok(!expandedJoined.includes("hidden title"));
+		assert.ok(!summaryJoined.includes("private payload"));
+		assert.ok(!expandedJoined.includes("private payload"));
+		assert.ok(summaryJoined.includes("Inspect render.ts carefully."));
+		assert.ok(expandedJoined.includes("Verify refreshes can be triggered safely."));
 	});
 
 	it("preserves theme-generated ANSI while stripping model-provided sequences", () => {
@@ -2051,11 +2122,12 @@ describe("thinkingStepsExtension failure paths", () => {
 		}
 	});
 
-	it("releases a retained patch from a later different-scope extension instance when session_shutdown is not observed", async () => {
+	it("does not release a retained patch from an unmatched different-scope shutdown", async () => {
 		resetExtensionState("/scope-reload");
 		const firstHarness = createExtensionHarness([], true, "/scope-reload");
 		const secondHarness = createExtensionHarness([], true, "/other-scope");
 		const firstStart = getSingleHandler(firstHarness.pi, "session_start");
+		const firstShutdown = getSingleHandler(firstHarness.pi, "session_shutdown");
 		const secondShutdown = getSingleHandler(secondHarness.pi, "session_shutdown");
 
 		try {
@@ -2064,10 +2136,13 @@ describe("thinkingStepsExtension failure paths", () => {
 			assert.equal(getPatchRefCount(), 1);
 
 			await secondShutdown({}, secondHarness.ctx);
+			assert.equal(getPatchRefCount(), 1);
+
+			await firstShutdown({}, firstHarness.ctx);
 			assert.equal(getPatchRefCount(), 0);
 		} finally {
 			while (getPatchRefCount() > 0) {
-				await secondShutdown({}, secondHarness.ctx);
+				await firstShutdown({}, firstHarness.ctx);
 			}
 			resetExtensionState();
 		}
@@ -2384,6 +2459,77 @@ describe("scope-aware runtime state", () => {
 		assert.ok(expandedLines.includes("Thinking Steps · Expanded"));
 	});
 
+	it("resolves patched component scope from the message lifecycle owner", async () => {
+		const scopeA = "/tmp/pi-thinking-steps-patched-scope-a";
+		const scopeB = "/tmp/pi-thinking-steps-patched-scope-b";
+		resetExtensionState(scopeA);
+
+		const { pi: piA, ctx: ctxA } = createExtensionHarness([], true, scopeA);
+		const { pi: piB, ctx: ctxB } = createExtensionHarness([], true, scopeB);
+		const sessionStartA = getSingleHandler(piA, "session_start");
+		const sessionStartB = getSingleHandler(piB, "session_start");
+		const sessionShutdownA = getSingleHandler(piA, "session_shutdown");
+		const sessionShutdownB = getSingleHandler(piB, "session_shutdown");
+		const messageUpdateA = getSingleHandler(piA, "message_update");
+		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
+			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[] } }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
+			),
+			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+				PI_CODING_AGENT_INTERNAL_MODULES.theme,
+			),
+		]);
+		initTheme("dark", true);
+
+		let startedA = false;
+		let startedB = false;
+		try {
+			await sessionStartA({}, ctxA);
+			startedA = true;
+			await sessionStartB({}, ctxB);
+			startedB = true;
+			setThinkingStepsMode("collapsed", scopeA);
+			setThinkingStepsMode("expanded", scopeB);
+
+			const message = {
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				timestamp: 919,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				content: [{ type: "thinking", thinking: "Inspect alpha scope rendering." }],
+			} as const;
+
+			await messageUpdateA({
+				message,
+				assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+			});
+			setCurrentThinkingScopeKey(scopeB);
+			const component = new AssistantMessageComponent(message, false);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			assert.match(rendered, /Thinking/);
+			assert.doesNotMatch(rendered, /Thinking Steps · Expanded/);
+			assert.match(rendered, /Inspect alpha scope rendering/);
+		} finally {
+			if (startedB) await sessionShutdownB({}, ctxB);
+			if (startedA) await sessionShutdownA({}, ctxA);
+			while (getPatchRefCount() > 0) {
+				await sessionShutdownA({}, ctxA);
+			}
+			resetExtensionState();
+		}
+	});
+
 	it("rerenders summary and expanded output when the active step changes at the same width", () => {
 		const scope = "/scope-cache";
 		const trackingTheme: ThinkingThemeLike = {
@@ -2416,6 +2562,49 @@ describe("scope-aware runtime state", () => {
 		}
 	});
 
+	it("keeps reused message objects on their original lifecycle scope", async () => {
+		const scopeA = "/tmp/pi-thinking-steps-reused-message-a";
+		const scopeB = "/tmp/pi-thinking-steps-reused-message-b";
+		resetExtensionState(scopeA);
+
+		const { pi: piA, ctx: ctxA } = createExtensionHarness([], true, scopeA);
+		const { pi: piB, ctx: ctxB } = createExtensionHarness([], true, scopeB);
+		const sessionStartA = getSingleHandler(piA, "session_start");
+		const sessionStartB = getSingleHandler(piB, "session_start");
+		const sessionShutdownA = getSingleHandler(piA, "session_shutdown");
+		const sessionShutdownB = getSingleHandler(piB, "session_shutdown");
+		const messageUpdateA = getSingleHandler(piA, "message_update");
+		const messageUpdateB = getSingleHandler(piB, "message_update");
+		let startedA = false;
+		let startedB = false;
+
+		try {
+			await sessionStartA({}, ctxA);
+			startedA = true;
+			await sessionStartB({}, ctxB);
+			startedB = true;
+			const message = { role: "assistant", timestamp: 37 };
+
+			await messageUpdateA({
+				message,
+				assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+			});
+			await messageUpdateB({
+				message,
+				assistantMessageEvent: { type: "thinking_delta", contentIndex: 1 },
+			});
+
+			assert.deepEqual(getActiveThinkingState(37, scopeA), { active: true, messageTimestamp: 37, contentIndex: 1 });
+			assert.deepEqual(getActiveThinkingState(37, scopeB), { active: false });
+		} finally {
+			if (startedB) await sessionShutdownB({}, ctxB);
+			if (startedA) await sessionShutdownA({}, ctxA);
+			while (getPatchRefCount() > 0) {
+				await sessionShutdownA({}, ctxA);
+			}
+			resetExtensionState();
+		}
+	});
 	it("thinkingStepsExtension scopes duplicate message timestamps per extension instance", async () => {
 	const scopeA = "/tmp/pi-thinking-steps-scope-a";
 	const scopeB = "/tmp/pi-thinking-steps-scope-b";
@@ -2553,7 +2742,10 @@ describe("repo metadata contracts", () => {
 	it("keeps published files, pinned Pi dependencies, docs, and archived prompts aligned", async () => {
 		const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
 			version: string;
+			main: string;
 			files: string[];
+			pi?: { extensions?: string[] };
+			scripts: Record<string, string>;
 			license: string;
 			dependencies: Record<string, string>;
 			devDependencies: Record<string, string>;
@@ -2567,6 +2759,16 @@ describe("repo metadata contracts", () => {
 		}
 		assert.equal(packageJson.version, packageLock.version);
 		assert.equal(packageJson.version, packageLock.packages?.[""]?.version);
+		assert.equal(packageJson.main, "index.ts");
+		assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
+		assert.ok(packageJson.files.includes(packageJson.main));
+		for (const extension of packageJson.pi?.extensions ?? []) {
+			assert.ok(packageJson.files.includes(extension.replace(/^\.\//, "")));
+		}
+		assert.match(packageJson.scripts.test, /^npm run build && /);
+		assert.match(packageJson.scripts.test, /node --import tsx test\/thinking-steps\.test\.ts/);
+		assert.match(packageJson.scripts.test, /node --import tsx test\/summarizer-challenger\.test\.ts/);
+		assert.ok(packageJson.scripts.test.indexOf("test/thinking-steps.test.ts") < packageJson.scripts.test.indexOf("test/summarizer-challenger.test.ts"));
 		assert.equal(packageJson.license, "MIT");
 		assert.equal(packageJson.dependencies["@mariozechner/pi-ai"], "0.69.0");
 		assert.equal(packageJson.dependencies["@mariozechner/pi-coding-agent"], "0.69.0");
@@ -2586,6 +2788,8 @@ describe("repo metadata contracts", () => {
 		assert.ok(readme.includes("badge/license-MIT"));
 		assert.ok(readme.includes(`releases/tag/v${packageJson.version}`));
 		assert.ok(readme.includes(`release-v${packageJson.version}`));
+		assert.ok(readme.includes("retained patch releases are scope-owned"));
+		assert.ok(readme.includes("assistant message ownership is recorded"));
 
 		const agents = await readFile("AGENTS.md", "utf8");
 		assert.ok(agents.includes("project clear"));
@@ -2594,7 +2798,25 @@ describe("repo metadata contracts", () => {
 		assert.ok(agents.includes(`## Current Version\n${packageJson.version}`));
 		assert.ok(agents.includes("plan.md"));
 		assert.ok(agents.includes("progress.md"));
+		assert.ok(agents.includes("tracked `CHANGELOG.md`"));
+		assert.ok(!agents.includes("currently has **no `CHANGELOG.md`"));
 		assert.ok(!agents.includes("summarization-algorithm.md"));
+
+		const progress = await readFile("progress.md", "utf8");
+		assert.ok(progress.includes("Non-authoritative placeholder"));
+		assert.ok(progress.includes("Larra sessions"));
+
+		const leftoverPrompt = await readFile("prompts/fix-leftover-issues_v1-0-0.md", "utf8");
+		assert.ok(leftoverPrompt.includes("planning/"));
+		assert.ok(!leftoverPrompt.includes("plannig/"));
+
+		const typesSource = await readFile("types.ts", "utf8");
+		assert.ok(typesSource.includes("export type PersistedThinkingStepsPreferenceScope"));
+		const persistenceSource = await readFile("persistence.ts", "utf8");
+		assert.ok(!persistenceSource.includes("export type PersistedThinkingStepsPreferenceScope"));
+		assert.ok(persistenceSource.includes("import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from \"./types.js\""));
+		const indexSource = await readFile("index.ts", "utf8");
+		assert.ok(indexSource.includes("import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from \"./types.js\""));
 
 		const archivedContinuePrompt = await readFile("prompts/continue-2026-04-16.md", "utf8");
 		assert.ok(archivedContinuePrompt.includes("Historical continuation prompt") || archivedContinuePrompt.includes("Archived continue prompt"));

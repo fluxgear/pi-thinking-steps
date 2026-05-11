@@ -211,6 +211,19 @@ describe("unchanged semantic-quality regressions", () => {
 		assert.doesNotMatch(summary, /^The safer approach is to keep the current summarizer as baseline/i);
 	});
 
+	it("handles lower-risk hybrid plans without relying on safer wording", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "The lower-risk path is to keep the current summarizer as baseline, add an event-aware challenger, and only use it when that challenger clearly wins.",
+			},
+		]);
+		const step = steps[0]!;
+
+		assert.equal(step.summary, "Plan: keep current summarizer baseline; add event-aware challenger; use when better.");
+		assert.equal(step.summaryEvents?.[0]?.type, "plan_change");
+		assert.match(step.challengerSummary ?? "", /event-aware challenger/i);
+	});
 	it("renders npm test failures with concise command-specific wording", () => {
 		const summary = summarizeThinkingText(
 			"npm test failed with exit code 1 while validating the summarizer changes.",

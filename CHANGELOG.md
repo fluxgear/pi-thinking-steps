@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.10 - 2026-05-11
+
+### Fixed
+
+- Isolated thinking patch release ownership and active thinking state across concurrent session scopes.
+- Preserved message ownership through patched rendering, including reused message objects and duplicate timestamps.
+- Hardened parser/summarizer handling for list continuations, failure vocabulary, plan-change wording, and visible summary metadata.
+- Stripped ST-terminated terminal control payloads from rendered thinking text.
+
+### Changed
+
+- Clarified compatibility and workflow documentation for scope-owned cleanup, degraded sessions, tracked changelog handling, and local planning artifacts.
+- Centralized persisted preference scope typing in shared contracts.
+
+### Tests
+
+- Added regressions covering scoped patch lifecycle, parser/summarizer edge cases, terminal control sanitization, package metadata contracts, and docs/workflow drift.
+
 ## 1.0.9 - 2026-05-06
 
 ### Fixed

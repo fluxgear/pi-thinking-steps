@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AssistantMessage, ThinkingContent } from "@mariozechner/pi-ai";
 import { Markdown, Spacer, Text } from "@mariozechner/pi-tui";
-import { decrementPatchRefCount, getPatchCleanup, getPatchInstallPromise, incrementPatchRefCount, setPatchCleanup, setPatchInstallPromise } from "./state.js";
+import { decrementPatchRefCount, getPatchCleanup, getPatchInstallPromise, incrementPatchRefCount, resolveThinkingMessageScope, setPatchCleanup, setPatchInstallPromise } from "./state.js";
 import { ThinkingStepsComponent } from "./render.js";
 import type { ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
 
@@ -310,7 +310,7 @@ async function installPatch(): Promise<() => void> {
 				}
 
 				if (content.type === "thinking" && thinkingBlocks.length > 0 && !renderedThinking) {
-					this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks));
+					this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks, resolveThinkingMessageScope(message)));
 					renderedThinking = true;
 					if (hasVisibleTextAfterThinking) {
 						this.contentContainer.addChild(new Spacer(1));

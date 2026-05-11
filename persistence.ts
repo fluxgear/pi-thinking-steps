@@ -2,9 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseThinkingMode } from "./parse.js";
-import type { ThinkingStepsMode } from "./types.js";
-
-export type PersistedThinkingStepsPreferenceScope = "project" | "global";
+import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from "./types.js";
 
 const PREFERENCE_FILE_NAME = "thinking-steps.json";
 

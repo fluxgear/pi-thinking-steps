@@ -183,6 +183,7 @@ function isListContinuationChunk(chunk: string): boolean {
 		.find(Boolean);
 	if (!firstLine) return false;
 	if (FAILURE_CUE_RE.test(firstLine)) return false;
+	if (STANDALONE_LIST_ACTION_RE.test(firstLine)) return false;
 
 	return !/^(?:overall|in summary|to summarize|in conclusion|finally|that should|this should|those steps should|this confirms|that confirms|with that)\b/i.test(firstLine);
 }
@@ -234,7 +235,7 @@ const ARTIFACT_RE = /(?:\b[a-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|txt|yml|yaml|loc
 const FAILURE_CUE_RE = /\b(failed|failure|error|errors|blocked|abort(?:ed)?|cannot|unable|did not complete|not completed|reverted|rollback|locked)\b/i;
 const SUCCESS_CUE_RE = /\b(pass(?:ed)?|succeed(?:ed)?)\b/i;
 const DECISION_CUE_RE = /\b(decided|decision|chose|switched|replaced|confirmed|fixed|resolved|discovered|found|preserve|keeping|keep)\b/i;
-const PLAN_CHANGE_CUE_RE = /\b(instead of|rather than|safer (?:plan|route|approach)|plan changed|keep the current summarizer as the baseline|only choose the challenger|limit the algorithmic changes)\b/i;
+const PLAN_CHANGE_CUE_RE = /\b(instead of|rather than|safer (?:plan|path|route|approach|option)|(?:less|lower)-?risk(?:y)? (?:plan|path|route|approach|option)|plan changed|keep the current summarizer as the baseline|only choose the challenger|limit the algorithmic changes)\b/i;
 const ACTION_CUE_RE = /\b(retry|rerun|inspect|check|verify|compare|search|find|read|patch|update|implement|remove|rename|write|run|fix|switch|revert|gather|retrieve|list|flag|review|plan|map|archive|explore|wait|look\s+into)\b/i;
 const NEXT_ACTION_CUE_RE = /\b(first|next|retry|rerun|before|after)\b/i;
 const UNCERTAINTY_CUE_RE = /\b(maybe|might|possibly|probably|seems|looks like|suspect|likely|whether|unverified|haven'?t verified|not verified|before I call this)\b/i;
@@ -247,9 +248,17 @@ const WEAK_ORIENTATION_RE = /\bconnect and orient ourselves\b/i;
 const TOOL_AVAILABILITY_CHATTER_RE = /\b(?:while (?:there(?:'s| is)) a tool for it|might not retrieve\b|can't retrieve\b|cannot retrieve\b)\b/i;
 const OUTCOME_UNCERTAINTY_CONTEXT_RE = /\b(?:whether|if|not sure|unsure|uncertain|unverified|not verified|haven'?t verified|maybe|might|may be|possibly|probably|seems|looks like|suspect|before I call this)\b/i;
 const EXPLICIT_SUCCESS_RESULT_RE = /\b(?:(?:npm(?: run)? [a-z0-9:-]+|tests?|build|typecheck|lint|validation|suite|command)\s+(?:has\s+)?(?:passed|succeeded)|(?:passed|succeeded)\s+(?:after|once)\b(?=.*\b(?:npm|test|build|typecheck|lint|validation|suite|command)\b))/i;
+const EXPLICIT_FAILURE_RESULT_RE = /\b(?:failed|blocked|abort(?:ed)?|cannot|unable|did not complete|not completed|reverted|rollback|locked)\b/i;
+const EXPLICIT_ERROR_RESULT_RE = /\b(?:error|errors)\b(?:(?:\s*(?::|=|-))|(?:\s+(?:with|from|because|during|while|after|in|code|message)\b)|(?=.*\b(?:threw|throwing|throws|raised|encountered|reported|returned|hit|shows?|caught)\b))/i;
+const FAILURE_REFERENCE_CONTEXT_RE = /\b(?:failure|failures|error|errors)\s+(?:handling|rendering|renderer|case|cases|path|paths|state|states|logic|message|messages|copy|text|wording|semantics|classification|detection|cue|cues|recovery|fallback|branch|branches|surface|mode|modes)\b/i;
+const STANDALONE_LIST_ACTION_RE = /^(?:(?:i\s+)?(?:need|should|will|want|plan)\s+to|(?:next|then|now)\b|(?:need|should|must)\s+)/i;
 
 function hasExplicitFailureCue(sentence: string): boolean {
-	return FAILURE_CUE_RE.test(sentence) && !OUTCOME_UNCERTAINTY_CONTEXT_RE.test(sentence);
+	const normalized = collapseWhitespace(sentence);
+	if (!FAILURE_CUE_RE.test(normalized) || OUTCOME_UNCERTAINTY_CONTEXT_RE.test(normalized)) return false;
+	if (EXPLICIT_FAILURE_RESULT_RE.test(normalized)) return true;
+	if (EXPLICIT_ERROR_RESULT_RE.test(normalized) && !FAILURE_REFERENCE_CONTEXT_RE.test(normalized)) return true;
+	return false;
 }
 
 function hasExplicitSuccessCue(sentence: string): boolean {
@@ -967,14 +976,17 @@ function summarizeThinkingTextDetailed(text: string, fallback = "Reasoning is hi
 	}
 
 	const visibleSummary = ensureCompleteVisibleSummary(summary);
+	const visibleMetadata = summary === challengerSummary
+		? challenger
+		: summarizeThinkingTextChallenger(visibleSummary, fallback);
 	return {
 		summary: visibleSummary,
 		baselineSummary,
 		challengerSummary,
-		events: challenger.events,
-		collapsedPriority: challenger.collapsedPriority,
-		hasExplicitFailure: challenger.hasExplicitFailure,
-		hasExplicitSuccess: challenger.hasExplicitSuccess,
+		events: visibleMetadata.events,
+		collapsedPriority: visibleMetadata.collapsedPriority,
+		hasExplicitFailure: visibleMetadata.hasExplicitFailure,
+		hasExplicitSuccess: visibleMetadata.hasExplicitSuccess,
 	};
 }
 
@@ -984,11 +996,14 @@ export function summarizeThinkingText(text: string, fallback = "Reasoning is hid
 
 export function inferThinkingRole(text: string): ThinkingSemanticRole {
 	const haystack = ` ${normalizeNewlines(text).toLowerCase()} `;
+	const referenceOnlyFailureCue = FAILURE_REFERENCE_CONTEXT_RE.test(haystack)
+		&& !EXPLICIT_FAILURE_RESULT_RE.test(haystack)
+		&& !EXPLICIT_ERROR_RESULT_RE.test(haystack);
 	const scoredRoles: Array<{ role: ThinkingSemanticRole; score: number }> = [
 		{
 			role: "error",
 			score:
-				(Number(/\b(error|errors|fail|failed|failure|blocked|locked|cannot|unable|exception|bug|issue|problem|warning|debug|stack trace|traceback)\b/.test(haystack)) * 4) +
+				(Number(!referenceOnlyFailureCue && /\b(error|errors|fail|failed|failure|blocked|locked|cannot|unable|exception|bug|issue|problem|warning|debug|stack trace|traceback)\b/.test(haystack)) * 4) +
 				(Number(/\bfix\b/.test(haystack)) * 2),
 		},
 		{
