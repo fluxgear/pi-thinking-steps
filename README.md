@@ -9,7 +9,7 @@
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.10"><img alt="release" src="https://img.shields.io/badge/release-v1.0.10-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.11"><img alt="release" src="https://img.shields.io/badge/release-v1.0.11-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -196,7 +196,7 @@ That means:
 - `npm test` is part of the maintenance contract, not an optional extra
 - if patch install fails during `session_start`, the current session stays on Pi's native thinking renderer and live mode switching is disabled for that degraded session
 - project/global default saves and clears remain available during a degraded session, but they apply only to future compatible sessions
-- retained patch releases are scope-owned; cleanup runs on matching `session_shutdown`, and missed shutdowns are not recovered by unrelated cwd shutdowns
+- retained patch releases are scope-owned; cleanup runs on matching `session_shutdown`, failed final cleanup is retained for retry on a later matching same-scope shutdown, this package does not register a generic extension-unload hook, and missed shutdowns are not recovered by unrelated cwd shutdowns
 - assistant message ownership is recorded from lifecycle events so patched rendering can keep a message on its original scope even if another scope becomes current later
 - one registered extension instance still has a single active lifecycle scope for session-level events; Pi should not interleave new unowned sessions through one handler set without a new `session_start`/message ownership path
 
@@ -251,9 +251,11 @@ The package ships:
 - `CHANGELOG.md`
 - `LICENSE`
 - the extension TypeScript sources
+- `tsconfig.json`
+- the published validation tests under `test/`
 - the README SVG assets under `assets/`
 
-That keeps the GitHub README and the published package presentation aligned.
+That keeps the GitHub README, packaged validation surface, and published package presentation aligned.
 
 ---
 

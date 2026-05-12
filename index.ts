@@ -4,7 +4,7 @@ import { Key } from "@mariozechner/pi-tui";
 import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
-import { clearActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, recordThinkingMessageScope, registerThinkingPatchRelease, resolveThinkingMessageScope, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
+import { clearActiveThinkingState, clearThinkingMessageOwnership, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, recordThinkingMessageScope, registerThinkingPatchRelease, resolveThinkingMessageScope, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
 import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from "./types.js";
 
 type ThinkingStepsCommandScope = "session" | PersistedThinkingStepsPreferenceScope;
@@ -355,6 +355,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		const activeScopeKey = setSessionScopeKey(ctx.cwd);
 		clearActiveThinkingState(undefined, activeScopeKey);
+		clearThinkingMessageOwnership(activeScopeKey);
 		markSessionDegraded(activeScopeKey, false);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("thinking-steps", undefined);
@@ -368,6 +369,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		try {
 			await releasePatch();
 		} catch (error) {
+			registerThinkingPatchRelease(activeScopeKey, releasePatch);
 			reportPatchError(ctx, error);
 		}
 	});

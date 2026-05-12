@@ -523,6 +523,21 @@ describe("inferThinkingRole", () => {
 		assert.equal(steps[0]?.role, "inspect");
 		assert.equal(steps[1]?.role, "compare");
 	});
+
+	it("does not treat issue, problem, or warning reference prose as error-role failures", () => {
+		const steps = deriveThinkingSteps([{
+			contentIndex: 0,
+			text: "Inspect issue handling in parse.ts.\n\nCompare warning rendering in render.ts.\n\nReview problem matching logic.",
+		}]);
+
+		assert.equal(steps.length, 3);
+		assert.equal(steps[0]?.hasExplicitFailure, false);
+		assert.equal(steps[1]?.hasExplicitFailure, false);
+		assert.equal(steps[2]?.hasExplicitFailure, false);
+		assert.equal(steps[0]?.role, "inspect");
+		assert.equal(steps[1]?.role, "compare");
+		assert.equal(steps[2]?.role, "inspect");
+	});
 });
 describe("renderThinkingStepsLines", () => {
 	const theme = createPlainTheme();
@@ -1632,6 +1647,20 @@ describe("deriveThinkingSteps list continuations", () => {
 		assert.equal(steps[1]?.body, "## Patch plan\n\n2. Update render.ts.");
 	});
 
+	it("keeps heading scope on list items after heading plus intro prose", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "## Patch plan\n\nWe should validate parser boundaries first.\n\n- Inspect parse.ts.\n- Update render.ts.",
+			},
+		]);
+
+		assert.equal(steps.length, 3);
+		assert.equal(steps[0]?.body, "## Patch plan\n\nWe should validate parser boundaries first.");
+		assert.equal(steps[1]?.body, "## Patch plan\n\n- Inspect parse.ts.");
+		assert.equal(steps[2]?.body, "## Patch plan\n\n- Update render.ts.");
+	});
+
 	it("splits an explicit failure paragraph after list items into its own step", () => {
 		const steps = deriveThinkingSteps([
 			{
@@ -1658,6 +1687,20 @@ describe("deriveThinkingSteps list continuations", () => {
 		assert.equal(steps.length, 3);
 		assert.equal(steps[0]?.body, "1. Inspect parse.ts.");
 		assert.equal(steps[1]?.body, "Need to update render.ts next.");
+		assert.equal(steps[2]?.body, "2. Run npm test.");
+	});
+
+	it("splits bare imperative prose after a list item into its own step", () => {
+		const steps = deriveThinkingSteps([
+			{
+				contentIndex: 0,
+				text: "1. Inspect parse.ts.\n\nCompare render.ts before editing.\n\n2. Run npm test.",
+			},
+		]);
+
+		assert.equal(steps.length, 3);
+		assert.equal(steps[0]?.body, "1. Inspect parse.ts.");
+		assert.equal(steps[1]?.body, "Compare render.ts before editing.");
 		assert.equal(steps[2]?.body, "2. Run npm test.");
 	});
 });
@@ -1753,6 +1796,24 @@ describe("renderThinkingStepsLines control-sequence sanitization", () => {
 		assert.ok(!summaryJoined.includes("private payload"));
 		assert.ok(!expandedJoined.includes("private payload"));
 		assert.ok(summaryJoined.includes("Inspect render.ts carefully."));
+		assert.ok(expandedJoined.includes("Verify refreshes can be triggered safely."));
+	});
+
+	it("strips non-CSI ESC control sequences from rendered thinking text", () => {
+		const steps = deriveThinkingSteps([{
+			contentIndex: 0,
+			text: "Inspect \u001bcrender.ts carefully.\n\nVerify \u001b7refreshes\u001b8 can be triggered safely.",
+		}]);
+		const expandedJoined = renderThinkingStepsLines(plainTheme, 120, {
+			mode: "expanded",
+			steps,
+			isActive: false,
+		}).join("\n");
+
+		assert.ok(!expandedJoined.includes("\u001bc"));
+		assert.ok(!expandedJoined.includes("\u001b7"));
+		assert.ok(!expandedJoined.includes("\u001b8"));
+		assert.ok(expandedJoined.includes("Inspect render.ts carefully."));
 		assert.ok(expandedJoined.includes("Verify refreshes can be triggered safely."));
 	});
 
@@ -1927,7 +1988,7 @@ describe("patch lifecycle regression coverage", () => {
 		}
 	});
 
-	it("restores the cleanup handle if final release cleanup throws", async () => {
+	it("keeps the final cleanup retryable if release cleanup throws", async () => {
 		const release = await retainThinkingStepsPatch();
 		const installedCleanup = getPatchCleanup();
 		assert.ok(installedCleanup);
@@ -1939,12 +2000,17 @@ describe("patch lifecycle regression coverage", () => {
 		try {
 			setPatchCleanup(failingCleanup);
 			await assert.rejects(() => release(), /cleanup failed/);
-			assert.equal(getPatchRefCount(), 0);
+			assert.equal(getPatchRefCount(), 1);
 			assert.equal(getPatchCleanup(), failingCleanup);
+
+			setPatchCleanup(installedCleanup);
+			await release();
+			assert.equal(getPatchRefCount(), 0);
+			assert.equal(getPatchCleanup(), undefined);
 		} finally {
-			if (installedCleanup) {
+			if (getPatchRefCount() > 0 && installedCleanup) {
 				setPatchCleanup(installedCleanup);
-				await installedCleanup();
+				await release();
 			}
 			setPatchCleanup(undefined);
 			setPatchInstallPromise(undefined);
@@ -2143,6 +2209,44 @@ describe("thinkingStepsExtension failure paths", () => {
 		} finally {
 			while (getPatchRefCount() > 0) {
 				await firstShutdown({}, firstHarness.ctx);
+			}
+			resetExtensionState();
+		}
+	});
+
+	it("requeues the scope-owned release when session shutdown cleanup throws", async () => {
+		resetExtensionState("/scope-cleanup-retry");
+		const { pi, ctx } = createExtensionHarness([], true, "/scope-cleanup-retry");
+		const sessionStart = getSingleHandler(pi, "session_start");
+		const sessionShutdown = getSingleHandler(pi, "session_shutdown");
+		const failingCleanup = async () => {
+			throw new Error("cleanup failed");
+		};
+		let started = false;
+		let installedCleanup = getPatchCleanup();
+
+		try {
+			await sessionStart({}, ctx);
+			started = true;
+			installedCleanup = getPatchCleanup();
+			assert.ok(installedCleanup);
+
+			setPatchCleanup(failingCleanup);
+			await sessionShutdown({}, ctx);
+			assert.equal(getPatchRefCount(), 1);
+			assert.equal(getPatchCleanup(), failingCleanup);
+			assert.ok(ctx.ui.notifications.some((notification) => notification.level === "warning" && notification.message.includes("cleanup failed")));
+
+			setPatchCleanup(installedCleanup);
+			await sessionShutdown({}, ctx);
+			assert.equal(getPatchRefCount(), 0);
+			started = false;
+		} finally {
+			if (started && installedCleanup) {
+				setPatchCleanup(installedCleanup);
+			}
+			while (getPatchRefCount() > 0) {
+				await sessionShutdown({}, ctx);
 			}
 			resetExtensionState();
 		}
@@ -2605,6 +2709,55 @@ describe("scope-aware runtime state", () => {
 			resetExtensionState();
 		}
 	});
+
+	it("clears message ownership on session shutdown so reused messages can bind to a new scope", async () => {
+		const scopeA = "/tmp/pi-thinking-steps-shutdown-rebind-a";
+		const scopeB = "/tmp/pi-thinking-steps-shutdown-rebind-b";
+		resetExtensionState(scopeA);
+
+		const { pi: piA, ctx: ctxA } = createExtensionHarness([], true, scopeA);
+		const { pi: piB, ctx: ctxB } = createExtensionHarness([], true, scopeB);
+		const sessionStartA = getSingleHandler(piA, "session_start");
+		const sessionStartB = getSingleHandler(piB, "session_start");
+		const sessionShutdownA = getSingleHandler(piA, "session_shutdown");
+		const sessionShutdownB = getSingleHandler(piB, "session_shutdown");
+		const messageUpdateA = getSingleHandler(piA, "message_update");
+		const messageUpdateB = getSingleHandler(piB, "message_update");
+		let startedA = false;
+		let startedB = false;
+
+		try {
+			await sessionStartA({}, ctxA);
+			startedA = true;
+			const message = { role: "assistant", timestamp: 73 };
+
+			await messageUpdateA({
+				message,
+				assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+			});
+			assert.deepEqual(getActiveThinkingState(73, scopeA), { active: true, messageTimestamp: 73, contentIndex: 0 });
+
+			await sessionShutdownA({}, ctxA);
+			startedA = false;
+
+			await sessionStartB({}, ctxB);
+			startedB = true;
+			await messageUpdateB({
+				message,
+				assistantMessageEvent: { type: "thinking_delta", contentIndex: 1 },
+			});
+
+			assert.deepEqual(getActiveThinkingState(73, scopeA), { active: false });
+			assert.deepEqual(getActiveThinkingState(73, scopeB), { active: true, messageTimestamp: 73, contentIndex: 1 });
+		} finally {
+			if (startedB) await sessionShutdownB({}, ctxB);
+			if (startedA) await sessionShutdownA({}, ctxA);
+			while (getPatchRefCount() > 0) {
+				await sessionShutdownB({}, ctxB);
+			}
+			resetExtensionState();
+		}
+	});
 	it("thinkingStepsExtension scopes duplicate message timestamps per extension instance", async () => {
 	const scopeA = "/tmp/pi-thinking-steps-scope-a";
 	const scopeB = "/tmp/pi-thinking-steps-scope-b";
@@ -2757,6 +2910,9 @@ describe("repo metadata contracts", () => {
 		for (const file of packageJson.files) {
 			await assert.doesNotReject(readFile(file, "utf8"));
 		}
+		assert.ok(packageJson.files.includes("tsconfig.json"));
+		assert.ok(packageJson.files.includes("test/thinking-steps.test.ts"));
+		assert.ok(packageJson.files.includes("test/summarizer-challenger.test.ts"));
 		assert.equal(packageJson.version, packageLock.version);
 		assert.equal(packageJson.version, packageLock.packages?.[""]?.version);
 		assert.equal(packageJson.main, "index.ts");
@@ -2765,6 +2921,7 @@ describe("repo metadata contracts", () => {
 		for (const extension of packageJson.pi?.extensions ?? []) {
 			assert.ok(packageJson.files.includes(extension.replace(/^\.\//, "")));
 		}
+		assert.equal(packageJson.scripts.build, "tsc --noEmit");
 		assert.match(packageJson.scripts.test, /^npm run build && /);
 		assert.match(packageJson.scripts.test, /node --import tsx test\/thinking-steps\.test\.ts/);
 		assert.match(packageJson.scripts.test, /node --import tsx test\/summarizer-challenger\.test\.ts/);
@@ -2790,6 +2947,8 @@ describe("repo metadata contracts", () => {
 		assert.ok(readme.includes(`release-v${packageJson.version}`));
 		assert.ok(readme.includes("retained patch releases are scope-owned"));
 		assert.ok(readme.includes("assistant message ownership is recorded"));
+		assert.ok(readme.includes("`tsconfig.json`"));
+		assert.ok(readme.includes("published validation tests under `test/`"));
 
 		const agents = await readFile("AGENTS.md", "utf8");
 		assert.ok(agents.includes("project clear"));
@@ -2805,6 +2964,11 @@ describe("repo metadata contracts", () => {
 		const progress = await readFile("progress.md", "utf8");
 		assert.ok(progress.includes("Non-authoritative placeholder"));
 		assert.ok(progress.includes("Larra sessions"));
+
+		const plan = await readFile("plan.md", "utf8");
+		assert.ok(plan.includes("Historical/non-authoritative placeholder"));
+		assert.ok(plan.includes("completed in `v1.0.10`"));
+		assert.ok(plan.includes("CHANGELOG.md"));
 
 		const leftoverPrompt = await readFile("prompts/fix-leftover-issues_v1-0-0.md", "utf8");
 		assert.ok(leftoverPrompt.includes("planning/"));
@@ -2824,8 +2988,13 @@ describe("repo metadata contracts", () => {
 
 		const auditPromptV2 = await readFile("prompts/audit/generalized-deep-audit_v2-0-0.md", "utf8");
 		assert.ok(auditPromptV2.includes("Canonical generalized audit prompt"));
+		assert.ok(auditPromptV2.includes("CHANGELOG.md"));
 		assert.ok(auditPromptV2.includes("plan.md"));
 		assert.ok(auditPromptV2.includes("progress.md"));
 		assert.ok(!auditPromptV2.includes("summarization-algorithm.md"));
+
+		const auditPromptV1 = await readFile("prompts/audit/full-codebase-audit-v1.0.0.md", "utf8");
+		assert.ok(auditPromptV1.includes("Superseded / historical prompt"));
+		assert.ok(auditPromptV1.includes("generalized-deep-audit_v2-0-0.md"));
 	});
 });

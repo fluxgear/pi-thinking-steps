@@ -421,13 +421,18 @@ export async function retainThinkingStepsPatch(): Promise<() => Promise<void>> {
 	let released = false;
 	return async () => {
 		if (released) return;
-		released = true;
 
 		const refCount = decrementPatchRefCount();
-		if (refCount > 0) return;
+		if (refCount > 0) {
+			released = true;
+			return;
+		}
 
 		const currentCleanup = getPatchCleanup();
-		if (!currentCleanup) return;
+		if (!currentCleanup) {
+			released = true;
+			return;
+		}
 
 		if (getPatchCleanup() === currentCleanup) {
 			setPatchCleanup(undefined);
@@ -435,7 +440,9 @@ export async function retainThinkingStepsPatch(): Promise<() => Promise<void>> {
 
 		try {
 			await currentCleanup();
+			released = true;
 		} catch (error) {
+			incrementPatchRefCount();
 			if (!getPatchCleanup()) {
 				setPatchCleanup(currentCleanup);
 			}

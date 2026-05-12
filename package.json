@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-steps",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "license": "MIT",
   "type": "module",
@@ -33,7 +33,10 @@
     "persistence.ts",
     "render.ts",
     "state.ts",
-    "types.ts"
+    "types.ts",
+    "tsconfig.json",
+    "test/thinking-steps.test.ts",
+    "test/summarizer-challenger.test.ts"
   ],
   "pi": {
     "extensions": [

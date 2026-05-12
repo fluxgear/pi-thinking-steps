@@ -136,12 +136,32 @@ function mergeHeadingParagraphChunks(chunks: string[]): string[] {
 		const chunk = chunks[index]!;
 		const nextChunk = chunks[index + 1];
 		if (isStandaloneHeadingChunk(chunk)) {
-			const followingListChunks: string[] = [];
+			const introChunks: string[] = [];
 			let nextIndex = index + 1;
+			while (
+				nextIndex < chunks.length
+				&& !isStandaloneHeadingChunk(chunks[nextIndex]!)
+				&& !isListParagraphChunk(chunks[nextIndex]!)
+			) {
+				introChunks.push(chunks[nextIndex]!);
+				nextIndex += 1;
+			}
+
+			const followingListChunks: string[] = [];
 			while (nextIndex < chunks.length && isListParagraphChunk(chunks[nextIndex]!)) {
 				followingListChunks.push(chunks[nextIndex]!);
 				nextIndex += 1;
 			}
+
+			if (introChunks.length > 0 && followingListChunks.length > 0) {
+				merged.push(`${chunk}\n\n${introChunks.join("\n\n")}`);
+				for (const listChunk of followingListChunks) {
+					merged.push(`${chunk}\n\n${listChunk}`);
+				}
+				index = nextIndex - 1;
+				continue;
+			}
+
 			if (followingListChunks.length > 0) {
 				merged.push(`${chunk}\n\n${followingListChunks.join("\n\n")}`);
 				index = nextIndex - 1;
@@ -184,6 +204,14 @@ function isListContinuationChunk(chunk: string): boolean {
 	if (!firstLine) return false;
 	if (FAILURE_CUE_RE.test(firstLine)) return false;
 	if (STANDALONE_LIST_ACTION_RE.test(firstLine)) return false;
+
+	const hasFocusedActionCue = DIRECT_ACTION_START_RE.test(firstLine)
+		&& (
+			collectPathTokens(firstLine).length > 0
+			|| (firstLine.match(SYMBOL_TOKEN_RE) ?? []).length > 0
+			|| /\b(?:before editing|after editing|npm|node|git|pi|larra|mcp|tsx|tsc)\b/i.test(firstLine)
+		);
+	if (hasFocusedActionCue) return false;
 
 	return !/^(?:overall|in summary|to summarize|in conclusion|finally|that should|this should|those steps should|this confirms|that confirms|with that)\b/i.test(firstLine);
 }
@@ -791,9 +819,10 @@ function extractThinkingSummaryEvents(text: string): ThinkingSummaryEvent[] {
 		const hasFailure = hasExplicitFailureCue(sentence);
 		const hasSuccess = hasExplicitSuccessCue(sentence);
 		const hasUncertainty = UNCERTAINTY_CUE_RE.test(sentence) || SPECULATIVE_CUE_RE.test(sentence);
-		const hasPlanChange = PLAN_CHANGE_CUE_RE.test(sentence)
+		const hasPlanChange = !hasUncertainty
+			&& PLAN_CHANGE_CUE_RE.test(sentence)
 			&& (!/\b(?:instead of|rather than)\b/i.test(sentence) || /^(?:instead of|rather than)\b/i.test(sentence));
-		const hasDecision = DECISION_CUE_RE.test(sentence);
+		const hasDecision = !hasUncertainty && DECISION_CUE_RE.test(sentence);
 		const hasFocus = collectPathTokens(sentence).length > 0 || (sentence.match(SYMBOL_TOKEN_RE) ?? []).length > 0;
 		const hasAction = ACTION_CUE_RE.test(sentence) || NEXT_ACTION_CUE_RE.test(sentence);
 
@@ -999,11 +1028,12 @@ export function inferThinkingRole(text: string): ThinkingSemanticRole {
 	const referenceOnlyFailureCue = FAILURE_REFERENCE_CONTEXT_RE.test(haystack)
 		&& !EXPLICIT_FAILURE_RESULT_RE.test(haystack)
 		&& !EXPLICIT_ERROR_RESULT_RE.test(haystack);
+	const referenceOnlyIssueCue = /\b(?:issue|issues|problem|problems|warning|warnings)\s+(?:handling|rendering|renderer|case|cases|path|paths|state|states|logic|message|messages|copy|text|wording|semantics|classification|detection|cue|cues|recovery|fallback|branch|branches|surface|mode|modes|statement|matching|reproduction|steps?)\b/.test(haystack);
 	const scoredRoles: Array<{ role: ThinkingSemanticRole; score: number }> = [
 		{
 			role: "error",
 			score:
-				(Number(!referenceOnlyFailureCue && /\b(error|errors|fail|failed|failure|blocked|locked|cannot|unable|exception|bug|issue|problem|warning|debug|stack trace|traceback)\b/.test(haystack)) * 4) +
+				(Number(!referenceOnlyFailureCue && !referenceOnlyIssueCue && /\b(error|errors|fail|failed|failure|blocked|locked|cannot|unable|exception|bug|issue|problem|warning|debug|stack trace|traceback)\b/.test(haystack)) * 4) +
 				(Number(/\bfix\b/.test(haystack)) * 2),
 		},
 		{

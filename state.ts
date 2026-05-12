@@ -19,6 +19,7 @@ interface ThinkingStepsGlobalState {
 	lastActiveByScopeKey: Record<string, ActiveThinkingState>;
 	refreshToggleByScope: Record<string, boolean>;
 	messageScopeByObject: WeakMap<object, string>;
+	messageObjectsByScope: Record<string, Set<object>>;
 	messageScopeByTimestamp: Record<string, string>;
 	patchReleases: PatchRelease[];
 	patchReleasesByScope: Record<string, PatchRelease[]>;
@@ -36,6 +37,7 @@ interface LegacyThinkingStepsGlobalState {
 	lastActiveByScopeKey?: unknown;
 	refreshToggleByScope?: unknown;
 	messageScopeByObject?: unknown;
+	messageObjectsByScope?: unknown;
 	messageScopeByTimestamp?: unknown;
 	patchReleases?: unknown;
 	patchReleasesByScope?: unknown;
@@ -114,6 +116,10 @@ function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinking
 	const refreshToggleByScope: Record<string, boolean> = isRecord(state.refreshToggleByScope)
 		? Object.fromEntries(Object.entries(state.refreshToggleByScope).map(([scopeKey, enabled]) => [normalizeThinkingScopeKey(scopeKey), enabled === true]))
 		: {};
+	const messageScopeByObject = state.messageScopeByObject instanceof WeakMap ? state.messageScopeByObject as WeakMap<object, string> : new WeakMap<object, string>();
+	const messageObjectsByScope: Record<string, Set<object>> = isRecord(state.messageObjectsByScope)
+		? Object.fromEntries(Object.entries(state.messageObjectsByScope).map(([scopeKey, messages]) => [normalizeThinkingScopeKey(scopeKey), messages instanceof Set ? messages as Set<object> : new Set<object>()]))
+		: {};
 	const messageScopeByTimestamp: Record<string, string> = isRecord(state.messageScopeByTimestamp)
 		? Object.fromEntries(Object.entries(state.messageScopeByTimestamp).filter((entry): entry is [string, string] => typeof entry[1] === "string").map(([messageTimestamp, scopeKey]) => [messageTimestamp, normalizeThinkingScopeKey(scopeKey)]))
 		: {};
@@ -129,6 +135,7 @@ function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinking
 		activeByScopeKey[scopeKey] ??= {};
 		lastActiveByScopeKey[scopeKey] ??= { active: false };
 		refreshToggleByScope[scopeKey] ??= false;
+		messageObjectsByScope[scopeKey] ??= new Set<object>();
 		patchReleasesByScope[scopeKey] ??= [];
 	}
 
@@ -146,7 +153,8 @@ function ensureGlobalStateShape(state: ThinkingStepsGlobalState & LegacyThinking
 	state.activeByScopeKey = activeByScopeKey;
 	state.lastActiveByScopeKey = lastActiveByScopeKey;
 	state.refreshToggleByScope = refreshToggleByScope;
-	state.messageScopeByObject = state.messageScopeByObject instanceof WeakMap ? state.messageScopeByObject as WeakMap<object, string> : new WeakMap<object, string>();
+	state.messageScopeByObject = messageScopeByObject;
+	state.messageObjectsByScope = messageObjectsByScope;
 	state.messageScopeByTimestamp = messageScopeByTimestamp;
 	state.patchReleases = patchReleases;
 	state.patchReleasesByScope = patchReleasesByScope;
@@ -170,6 +178,7 @@ const globalState = (() => {
 		lastActiveByScopeKey: { [DEFAULT_SCOPE_KEY]: { active: false } },
 		refreshToggleByScope: {},
 		messageScopeByObject: new WeakMap<object, string>(),
+		messageObjectsByScope: { [DEFAULT_SCOPE_KEY]: new Set<object>() },
 		messageScopeByTimestamp: {},
 		patchReleases: [],
 		patchReleasesByScope: {},
@@ -191,6 +200,9 @@ function ensureScopeState(scopeKey: string): void {
 	}
 	if (!(scopeKey in globalState.refreshToggleByScope)) {
 		globalState.refreshToggleByScope[scopeKey] = false;
+	}
+	if (!(scopeKey in globalState.messageObjectsByScope)) {
+		globalState.messageObjectsByScope[scopeKey] = new Set<object>();
 	}
 	if (!(scopeKey in globalState.patchReleasesByScope)) {
 		globalState.patchReleasesByScope[scopeKey] = [];
@@ -306,6 +318,7 @@ export function recordThinkingMessageScope(message: object, scopeKey?: string): 
 	if (!existingScopeKey) {
 		globalState.messageScopeByObject.set(message, normalizedScopeKey);
 	}
+	globalState.messageObjectsByScope[normalizedScopeKey]!.add(message);
 
 	const timestamp = typeof (message as { timestamp?: unknown }).timestamp === "number"
 		? (message as { timestamp: number }).timestamp
@@ -338,14 +351,15 @@ export function resolveThinkingMessageScope(message: object, fallbackScopeKey?: 
 	return normalizedScopeKey;
 }
 
-export function resetThinkingStepsViewState(scopeKey?: string): void {
+export function clearThinkingMessageOwnership(scopeKey?: string): void {
 	if (scopeKey !== undefined) {
 		const normalizedScopeKey = normalizeThinkingScopeKey(scopeKey);
-		globalState.currentScopeKey = normalizedScopeKey;
-		globalState.modeByScopeKey[normalizedScopeKey] = "summary";
-		globalState.refreshToggleByScope[normalizedScopeKey] = false;
-		globalState.activeByScopeKey[normalizedScopeKey] = {};
-		globalState.lastActiveByScopeKey[normalizedScopeKey] = { active: false };
+		ensureScopeState(normalizedScopeKey);
+		const ownedMessages = globalState.messageObjectsByScope[normalizedScopeKey] ?? new Set<object>();
+		for (const message of ownedMessages) {
+			globalState.messageScopeByObject.delete(message);
+		}
+		globalState.messageObjectsByScope[normalizedScopeKey] = new Set<object>();
 		for (const [messageTimestamp, ownerScopeKey] of Object.entries(globalState.messageScopeByTimestamp)) {
 			if (ownerScopeKey === normalizedScopeKey) {
 				delete globalState.messageScopeByTimestamp[messageTimestamp];
@@ -354,13 +368,29 @@ export function resetThinkingStepsViewState(scopeKey?: string): void {
 		return;
 	}
 
+	globalState.messageScopeByObject = new WeakMap<object, string>();
+	globalState.messageObjectsByScope = { [DEFAULT_SCOPE_KEY]: new Set<object>() };
+	globalState.messageScopeByTimestamp = {};
+}
+
+export function resetThinkingStepsViewState(scopeKey?: string): void {
+	if (scopeKey !== undefined) {
+		const normalizedScopeKey = normalizeThinkingScopeKey(scopeKey);
+		globalState.currentScopeKey = normalizedScopeKey;
+		globalState.modeByScopeKey[normalizedScopeKey] = "summary";
+		globalState.refreshToggleByScope[normalizedScopeKey] = false;
+		globalState.activeByScopeKey[normalizedScopeKey] = {};
+		globalState.lastActiveByScopeKey[normalizedScopeKey] = { active: false };
+		clearThinkingMessageOwnership(normalizedScopeKey);
+		return;
+	}
+
 	globalState.currentScopeKey = DEFAULT_SCOPE_KEY;
 	globalState.modeByScopeKey = { [DEFAULT_SCOPE_KEY]: "summary" };
 	globalState.activeByScopeKey = { [DEFAULT_SCOPE_KEY]: {} };
 	globalState.lastActiveByScopeKey = { [DEFAULT_SCOPE_KEY]: { active: false } };
 	globalState.refreshToggleByScope = {};
-	globalState.messageScopeByObject = new WeakMap<object, string>();
-	globalState.messageScopeByTimestamp = {};
+	clearThinkingMessageOwnership();
 }
 
 export function getPatchRefCount(): number {

@@ -54,7 +54,7 @@ function sanitizeThinkingText(text: string): string {
 		.replace(/\r\n?/g, "\n")
 		.replace(/\u001b[\]PX^_][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")
 		.replace(/[\u0090\u0098\u009d\u009e\u009f][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")
-		.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g, "")
+		.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|[ -/]*[0-9@-~])/g, "")
 		.replace(/\u009b[0-?]*[ -/]*[@-~]/g, "")
 		.replace(/[\x00-\x08\x0B-\x1F\x7F-\x9F]/g, "");
 }
